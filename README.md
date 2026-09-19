@@ -160,6 +160,7 @@ The tool will:
 When managing a full marching band library (hundreds of charts across dozens of instrument packets), running full extractions repeatedly is resource-intensive. FlipFolder-Parser includes a built-in high-performance build engine:
 
 ### 1. Incremental Caching (Sub-Second Re-runs)
+
 Every extracted chart is hashed against its source PDF file timestamp, page slice, and extraction parameters in `.flipfolder_cache.json`. Subsequent runs automatically detect unchanged charts and skip rendering:
 
 ```bash
@@ -171,11 +172,13 @@ python flip_folder_tool.py "Clarinet 1.pdf"
 ```
 
 To force a full rebuild bypassing the cache:
+
 ```bash
 python flip_folder_tool.py "Clarinet 1.pdf" --force
 ```
 
 ### 2. Multi-Core Parallelization (`-j` / `--jobs`)
+
 Distributes chart rendering and image processing across multiple CPU cores via process pooling:
 
 ```bash
@@ -184,6 +187,7 @@ python flip_folder_tool.py "Clarinet 1.pdf" -j 4
 ```
 
 ### 3. Selective Filtering (`--only` & `--pages`)
+
 Work on a single chart or a specific range of pages without processing the whole packet:
 
 ```bash
