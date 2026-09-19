@@ -11,7 +11,7 @@ import os
 import re
 import time
 
-import fitz
+import pymupdf
 import Vision
 from Cocoa import NSData
 
@@ -177,7 +177,7 @@ THROWBACK_MAP = {
 }
 
 def ocr_pdf_pages(pdf_path):
-    doc = fitz.open(pdf_path)
+    doc = pymupdf.open(pdf_path)
     req = Vision.VNRecognizeTextRequest.alloc().init()
     req.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
     req.setUsesLanguageCorrection_(False)

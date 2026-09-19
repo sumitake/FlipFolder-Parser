@@ -83,7 +83,7 @@ python flip_folder_tool.py "Clarinet 1.pdf"
 **That's it!** The tool will:
 
 1. Extract every song into the `Clarinet 1/` folder.
-2. Build a complete flip-folder book named `Clarinet 1 - ALL.pdf`.
+2. Build a complete flip-folder book named `Clarinet 1 - ALL.pdf` with an interactive Table of Contents (PDF Bookmarks/Outline) for single-tap navigation in tablet readers.
 
 ---
 

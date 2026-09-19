@@ -43,7 +43,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import pymupdf as fitz
+import pymupdf
 
 DEFAULT_TARGET_W_PT = 504.0   # 7.0 inches landscape (72 pt/in)
 DEFAULT_TARGET_H_PT = 360.0   # 5.0 inches landscape (72 pt/in)
@@ -286,9 +286,9 @@ def is_half_sheet_blank(doc, page_idx: int, section: str, dpi: int = 100) -> boo
     if section in ("full", "single", "all"):
         crop_box = p_rect
     elif section == "top":
-        crop_box = fitz.Rect(p_rect.x0, p_rect.y0, p_rect.x1, p_rect.y0 + p_rect.height * 0.50)
+        crop_box = pymupdf.Rect(p_rect.x0, p_rect.y0, p_rect.x1, p_rect.y0 + p_rect.height * 0.50)
     else:
-        crop_box = fitz.Rect(p_rect.x0, p_rect.y0 + p_rect.height * 0.50, p_rect.x1, p_rect.y1)
+        crop_box = pymupdf.Rect(p_rect.x0, p_rect.y0 + p_rect.height * 0.50, p_rect.x1, p_rect.y1)
         
     pix = src_page.get_pixmap(clip=crop_box, dpi=dpi)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.h, pix.w, pix.n))
@@ -311,7 +311,7 @@ def is_half_sheet_blank(doc, page_idx: int, section: str, dpi: int = 100) -> boo
 
 def generate_manifest_template(pdf_path: str, output_path: str = None):
     """Scan PDF and generate a starter JSON and CSV manifest."""
-    doc = fitz.open(pdf_path)
+    doc = pymupdf.open(pdf_path)
     total_pages = len(doc)
     catalog = []
     csv_rows = []
@@ -366,9 +366,9 @@ def process_half_sheet(doc, page_idx: int, section: str, dpi: int = DEFAULT_DPI,
     if is_full_page:
         crop_box = p_rect
     elif section in ("top", "clean_top", "halftime_top"):
-        crop_box = fitz.Rect(p_rect.x0, p_rect.y0, p_rect.x1, p_rect.y0 + p_rect.height * 0.50)
+        crop_box = pymupdf.Rect(p_rect.x0, p_rect.y0, p_rect.x1, p_rect.y0 + p_rect.height * 0.50)
     else:
-        crop_box = fitz.Rect(p_rect.x0, p_rect.y0 + p_rect.height * 0.50, p_rect.x1, p_rect.y1)
+        crop_box = pymupdf.Rect(p_rect.x0, p_rect.y0 + p_rect.height * 0.50, p_rect.x1, p_rect.y1)
 
     pix = src_page.get_pixmap(clip=crop_box, dpi=72 if is_full_page else dpi)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.h, pix.w, pix.n))
@@ -537,7 +537,7 @@ def _render_and_save_chart_worker(task: dict) -> dict:
 
     try:
         opened_docs = {}
-        out_pdf = fitz.open()
+        out_pdf = pymupdf.open()
 
         for p_entry in pages_to_extract:
             p_idx = p_entry[0]
@@ -545,7 +545,7 @@ def _render_and_save_chart_worker(task: dict) -> dict:
             p_file = p_entry[2] if (len(p_entry) > 2 and p_entry[2]) else item.get("file", pdf_path)
             
             if p_file not in opened_docs:
-                opened_docs[p_file] = fitz.open(p_file)
+                opened_docs[p_file] = pymupdf.open(p_file)
             doc = opened_docs[p_file]
 
             if p_idx >= len(doc):
@@ -578,7 +578,7 @@ def _render_and_save_chart_worker(task: dict) -> dict:
 
             x_offset = margin_pt + (avail_w - draw_w) / 2.0
             y_offset = margin_pt + (avail_h - draw_h) / 2.0
-            dest_rect = fitz.Rect(x_offset, y_offset, x_offset + draw_w, y_offset + draw_h)
+            dest_rect = pymupdf.Rect(x_offset, y_offset, x_offset + draw_w, y_offset + draw_h)
 
             page_individual = out_pdf.new_page(width=target_w_pt, height=target_h_pt)
             page_individual.insert_image(dest_rect, stream=img_bytes)
@@ -621,20 +621,28 @@ def _render_and_save_chart_worker(task: dict) -> dict:
 def assemble_master_pdf(output_dir: str, catalog: list, master_pdf_path: str) -> tuple[int, float]:
     """
     Fast zero-reencode master PDF assembly by splicing individual chart PDFs.
+    Generates an interactive Table of Contents / Outline for mobile & tablet readers.
     Returns (total_pages, file_size_mb).
     """
-    master_pdf = fitz.open()
+    master_pdf = pymupdf.open()
     total_pages = 0
+    toc = []
     for item in catalog:
         out_filename = f"{item['title']}_5x7.pdf"
         chart_path = os.path.join(output_dir, out_filename)
         if os.path.exists(chart_path):
-            chart_doc = fitz.open(chart_path)
+            chart_doc = pymupdf.open(chart_path)
+            chart_len = len(chart_doc)
+            toc_title = item.get("raw_title") or item["title"].replace("_", " ")
+            toc.append([1, toc_title, total_pages + 1])
             master_pdf.insert_pdf(chart_doc)
-            total_pages += len(chart_doc)
+            total_pages += chart_len
             chart_doc.close()
         else:
             print(f"  [Warning] Missing chart PDF for master collection: {out_filename}")
+
+    if toc:
+        master_pdf.set_toc(toc)
 
     tmp_master_path = master_pdf_path + ".tmp"
     master_pdf.save(tmp_master_path, garbage=4, deflate=True)
@@ -681,7 +689,7 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
     if manifest_path is None:
         manifest_path = find_default_manifest(pdf_path)
 
-    doc = fitz.open(pdf_path)
+    doc = pymupdf.open(pdf_path)
     num_doc_pages = len(doc)
 
     if manifest_path and Path(manifest_path).exists():
