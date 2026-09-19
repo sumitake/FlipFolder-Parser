@@ -15,7 +15,7 @@ def test_batch_process_directory_empty(temp_dir):
 
 def test_batch_process_directory_multiple_instruments(temp_dir):
     # Create two instrument PDFs
-    insts = ["Trumpet 1", "Trombone 1"]
+    insts = ["Test_Trumpet", "Test_Trombone"]
     for inst in insts:
         pdf_path = temp_dir / f"{inst}.pdf"
         doc = pymupdf.open()

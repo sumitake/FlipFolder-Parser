@@ -1062,8 +1062,8 @@ def batch_process_directory(
             search_manifest_dirs.append(Path(manifest_dir))
         search_manifest_dirs.extend([
             batch_path / "manifests",
-            Path("manifests"),
             batch_path,
+            Path("manifests"),
             Path("."),
         ])
 
