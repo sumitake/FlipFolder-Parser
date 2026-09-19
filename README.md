@@ -53,7 +53,7 @@ Simply point your AI agent at this repository and your sheet music scans, then p
 ```text
 Please process my marching band sheet music using FlipFolder-Parser:
 - Repository: https://github.com/sumitake/FlipFolder-Parser.git
-- Music Scans: <PATH_TO_YOUR_PDF_OR_DIRECTORY> (e.g. "Clarinet 1.pdf" or "/path/to/Alumni Band Music")
+- Music Scans: <PATH_TO_YOUR_PDF_OR_DIRECTORY> (e.g. "Clarinet 1.pdf" or "/path/to/music")
 
 Instructions:
 1. Set up a Python environment and install dependencies from requirements.txt.
