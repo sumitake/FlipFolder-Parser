@@ -44,9 +44,9 @@ Marching band music is traditionally printed as **2-up half-sheets** (two songs 
 
 Choose the method that best fits your workflow:
 
-### Option A: Let an AI Agent Handle It (One-Prompt Execution)
+### Option A: Let an AI Agent Handle It (One-Shot Prompt Execution)
 
-If you use an AI coding assistant (Claude Code, OpenAI Codex, Antigravity, Gemini CLI, Cursor, Windsurf, or GitHub Copilot), you do not need to install packages, configure Python environments, or type command-line arguments manually.
+If you use an AI coding assistant (Claude Code, OpenAI Codex, Antigravity, Gemini CLI, Cursor, Windsurf, or Copilot), you do not need to install packages, configure Python environments, or type command-line arguments manually.
 
 Simply point your AI agent at this repository and your sheet music scans, then paste the following prompt:
 
@@ -65,7 +65,7 @@ Instructions:
 
 Your agent will inspect your music files, configure the dependencies, execute the tool, and report the locations of your finished flip-folder charts and master books.
 
-### Option B: Manual Setup (Step-by-Step for Humans)
+### Option B: Manual Setup
 
 You do **not** need programming experience to use this tool manually. Follow these simple steps:
 
