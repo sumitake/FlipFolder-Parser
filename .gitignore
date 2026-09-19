@@ -26,4 +26,6 @@ Thumbs.db
 Extracted_5x7_Charts*/
 extracted_charts/
 output/
+ocr_cache/
+manifests/
 

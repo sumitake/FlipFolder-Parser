@@ -81,12 +81,25 @@ def compute_chart_hash(pdf_path: str, item: dict, params: dict) -> str:
     Compute a deterministic SHA256 hash representing the source PDF state,
     chart pages/sections, and extraction hyperparameters.
     """
-    source_stat = os.stat(pdf_path)
+    source_files = set()
+    if "file" in item and item["file"]:
+        source_files.add(str(Path(item["file"]).resolve()))
+    for p in item.get("pages", []):
+        if len(p) > 2 and p[2]:
+            source_files.add(str(Path(p[2]).resolve()))
+    if not source_files:
+        source_files.add(str(Path(pdf_path).resolve()))
+
+    file_stats = []
+    for sf in sorted(source_files):
+        if os.path.exists(sf):
+            st = os.stat(sf)
+            file_stats.append({"path": sf, "mtime_ns": st.st_mtime_ns, "size": st.st_size})
+
     payload = {
-        "mtime_ns": source_stat.st_mtime_ns,
-        "size": source_stat.st_size,
+        "files": file_stats,
         "title": item["title"],
-        "pages": [[int(p[0]), str(p[1])] for p in item["pages"]],
+        "pages": [[int(p[0]), str(p[1]), str(p[2]) if len(p) > 2 else ""] for p in item["pages"]],
         "params": {
             "target_w_pt": float(params.get("target_w_pt", DEFAULT_TARGET_W_PT)),
             "target_h_pt": float(params.get("target_h_pt", DEFAULT_TARGET_H_PT)),
@@ -152,6 +165,7 @@ def load_manifest(manifest_path: str):
     if not path.exists():
         raise FileNotFoundError(f"Manifest file not found: {manifest_path}")
 
+    VALID_SECTIONS = ("top", "bottom", "full", "single", "all", "clean_top", "clean_bottom", "halftime_top", "halftime_bottom")
     catalog = []
     if path.suffix.lower() == ".csv":
         by_title = {}
@@ -165,34 +179,50 @@ def load_manifest(manifest_path: str):
                 except ValueError:
                     page_num = 0
                 sec = row.get("section", "top").strip().lower()
-                if sec not in ("top", "bottom", "full", "single", "all"):
+                if sec not in VALID_SECTIONS:
                     sec = "top"
+                file_opt = row.get("file", "").strip() or None
                 if title not in by_title:
                     item = {"title": title, "pages": []}
+                    if file_opt:
+                        item["file"] = file_opt
                     by_title[title] = item
                     catalog.append(item)
-                by_title[title]["pages"].append((page_num, sec))
+                if file_opt:
+                    by_title[title]["pages"].append((page_num, sec, file_opt))
+                else:
+                    by_title[title]["pages"].append((page_num, sec))
     elif path.suffix.lower() == ".json":
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         for item in data:
             title = sanitize_filename(item.get("title", "Untitled"))
+            item_file = item.get("file", None)
             pages = []
             for p in item.get("pages", []):
                 if isinstance(p, dict):
                     page_num = int(p.get("page", p.get("page_index", 1))) - 1
                     sec = str(p.get("section", "top")).strip().lower()
+                    p_file = p.get("file", item_file)
                 elif isinstance(p, (list, tuple)):
                     page_num = int(p[0]) - 1
                     sec = str(p[1]).strip().lower()
+                    p_file = p[2] if len(p) > 2 else item_file
                 else:
                     page_num = 0
                     sec = "top"
-                if sec not in ("top", "bottom", "full", "single", "all"):
+                    p_file = item_file
+                if sec not in VALID_SECTIONS:
                     sec = "top"
-                pages.append((page_num, sec))
+                if p_file:
+                    pages.append((page_num, sec, p_file))
+                else:
+                    pages.append((page_num, sec))
             if pages:
-                catalog.append({"title": title, "pages": pages})
+                cat_entry = {"title": title, "pages": pages}
+                if item_file:
+                    cat_entry["file"] = item_file
+                catalog.append(cat_entry)
     else:
         raise ValueError(f"Unsupported manifest format '{path.suffix}'. Use .json or .csv.")
 
@@ -331,14 +361,15 @@ def process_half_sheet(doc, page_idx: int, section: str, dpi: int = DEFAULT_DPI,
     src_page = doc[page_idx]
     p_rect = src_page.rect
     is_full_page = section in ("full", "single", "all")
-    
+    is_clean = section in ("clean_top", "clean_bottom", "halftime_top", "halftime_bottom")
+
     if is_full_page:
         crop_box = p_rect
-    elif section == "top":
+    elif section in ("top", "clean_top", "halftime_top"):
         crop_box = fitz.Rect(p_rect.x0, p_rect.y0, p_rect.x1, p_rect.y0 + p_rect.height * 0.50)
     else:
         crop_box = fitz.Rect(p_rect.x0, p_rect.y0 + p_rect.height * 0.50, p_rect.x1, p_rect.y1)
-        
+
     pix = src_page.get_pixmap(clip=crop_box, dpi=72 if is_full_page else dpi)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.h, pix.w, pix.n))
     if pix.n == 4:
@@ -347,24 +378,24 @@ def process_half_sheet(doc, page_idx: int, section: str, dpi: int = DEFAULT_DPI,
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     else:
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        
+
     h, w, _ = img.shape
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
+
     # 1. Correct skew
     if do_deskew:
         angle = calculate_deskew_angle(gray)
         if abs(angle) > 0.05:
             img = deskew_image(img, angle)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            
+
     # Scale coordinates based on DPI
-    scale = (h / 900.0) if is_full_page else (dpi / 200.0)
-    
+    scale = (h / 900.0) if (is_full_page or is_clean) else (dpi / 200.0)
+
     # 2. Binary mask and trim outer cut/binder guides
     _, thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
-    
-    if is_full_page:
+
+    if is_full_page or is_clean:
         left_strip_bound = int(w * 0.015)
         right_strip_bound = int(w * 0.985)
         thresh[:int(h * 0.015), :] = 0
@@ -376,38 +407,38 @@ def process_half_sheet(doc, page_idx: int, section: str, dpi: int = DEFAULT_DPI,
         right_strip_bound = int(1680 * scale)
         thresh[:, :left_strip_bound] = 0   # Strip binder punch guides and left margin cut lines
         thresh[:, right_strip_bound:] = 0  # Strip far right outer page edge
-        
+
         kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (int(100 * scale), 1))
-        
+
         # Remove top horizontal divider cutline if present
         top_limit = int(50 * scale)
         lines_top = cv2.morphologyEx(thresh[:top_limit, :], cv2.MORPH_OPEN, kernel_h)
         hit_top = np.where(np.sum(lines_top > 0, axis=1) > int(200 * scale))[0]
         if len(hit_top) > 0:
             thresh[:hit_top[-1] + int(3 * scale), :] = 0
-            
+
         # Remove bottom horizontal divider cutline if present
         bot_limit = int(60 * scale)
         lines_bot = cv2.morphologyEx(thresh[h - bot_limit:, :], cv2.MORPH_OPEN, kernel_h)
         hit_bot = np.where(np.sum(lines_bot > 0, axis=1) > int(200 * scale))[0]
         if len(hit_bot) > 0:
             thresh[h - bot_limit + hit_bot[0] - int(2 * scale):, :] = 0
-        
+
     # Active content horizontal boundaries
     col_ink = np.sum(thresh > 0, axis=0)
-    active_cols = np.where(col_ink > (int(5 * scale) if is_full_page else int(25 * scale)))[0]
+    active_cols = np.where(col_ink > (int(5 * scale) if (is_full_page or is_clean) else int(25 * scale)))[0]
     x_min = max(left_strip_bound, active_cols[0] - int(10 * scale)) if len(active_cols) > 0 else left_strip_bound
     x_max = min(right_strip_bound, active_cols[-1] + int(10 * scale)) if len(active_cols) > 0 else right_strip_bound
-    
+
     # Active content vertical boundaries
     row_ink = np.sum(thresh[:, x_min:x_max] > 0, axis=1)
-    active_rows = np.where(row_ink > (int(10 * scale) if is_full_page else int(30 * scale)))[0]
+    active_rows = np.where(row_ink > (int(10 * scale) if (is_full_page or is_clean) else int(30 * scale)))[0]
     y_min = max(int(5 * scale), active_rows[0] - int(10 * scale)) if len(active_rows) > 0 else int(5 * scale)
-    
+
     # 3. Detect staves and cleanly crop above copyright text
-    kernel_staff = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w * 0.025 if is_full_page else 40 * scale), 1))
+    kernel_staff = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w * 0.025 if (is_full_page or is_clean) else 40 * scale), 1))
     staves = cv2.morphologyEx(thresh[:, x_min:x_max], cv2.MORPH_OPEN, kernel_staff)
-    staff_rows = np.where(np.sum(staves > 0, axis=1) > int(w * 0.08 if is_full_page else 200 * scale))[0]
+    staff_rows = np.where(np.sum(staves > 0, axis=1) > int(w * 0.08 if (is_full_page or is_clean) else 200 * scale))[0]
     
     min_staff_span = int(15 * scale)
     if len(staff_rows) > 0:
@@ -505,10 +536,18 @@ def _render_and_save_chart_worker(task: dict) -> dict:
     tmp_out_path = out_path + ".tmp"
 
     try:
-        doc = fitz.open(pdf_path)
+        opened_docs = {}
         out_pdf = fitz.open()
 
-        for p_idx, section in pages_to_extract:
+        for p_entry in pages_to_extract:
+            p_idx = p_entry[0]
+            section = p_entry[1]
+            p_file = p_entry[2] if (len(p_entry) > 2 and p_entry[2]) else item.get("file", pdf_path)
+            
+            if p_file not in opened_docs:
+                opened_docs[p_file] = fitz.open(p_file)
+            doc = opened_docs[p_file]
+
             if p_idx >= len(doc):
                 continue
 
@@ -546,7 +585,8 @@ def _render_and_save_chart_worker(task: dict) -> dict:
 
         out_pdf.save(tmp_out_path, garbage=4, deflate=True)
         out_pdf.close()
-        doc.close()
+        for d in opened_docs.values():
+            d.close()
         os.replace(tmp_out_path, out_path)
 
         return {
@@ -562,6 +602,11 @@ def _render_and_save_chart_worker(task: dict) -> dict:
             try:
                 os.remove(tmp_out_path)
             except OSError:
+                pass
+        for d in opened_docs.values():
+            try:
+                d.close()
+            except Exception:
                 pass
         return {
             "title": title,
