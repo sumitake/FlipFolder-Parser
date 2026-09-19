@@ -40,18 +40,43 @@ Marching band music is traditionally printed as **2-up half-sheets** (two songs 
 
 ---
 
-## Quick Start (Step-by-Step for Beginners)
+## Quick Start
 
-You do **not** need programming experience to use this tool. Follow these simple steps:
+Choose the method that best fits your workflow:
 
-### Step 1: Install Python
+### Option A: Let an AI Agent Handle It (One-Prompt Execution)
+
+If you use an AI coding assistant (Claude Code, OpenAI Codex, Antigravity, Gemini CLI, Cursor, Windsurf, or GitHub Copilot), you do not need to install packages, configure Python environments, or type command-line arguments manually.
+
+Simply point your AI agent at this repository and your sheet music scans, then paste the following prompt:
+
+```text
+Please process my marching band sheet music using FlipFolder-Parser:
+- Repository: https://github.com/sumitake/FlipFolder-Parser.git
+- Music Scans: <PATH_TO_YOUR_PDF_OR_DIRECTORY> (e.g. "Clarinet 1.pdf" or "/path/to/Alumni Band Music")
+
+Instructions:
+1. Set up a Python environment and install dependencies from requirements.txt.
+2. If processing a single PDF, extract 5" × 7" landscape charts into its instrument folder and compile "<Instrument> - ALL.pdf" with interactive TOC bookmarks.
+3. If processing a folder of multiple instruments, run batch mode (--batch "<PATH_TO_DIRECTORY>") with --compress for optimized tablet file sizes.
+4. If a manifest is missing or this is a brand-new music packet, run --auto-catalog to automatically detect song titles using OCR.
+5. Provide a summary table of all extracted folders and compiled master flip-folder books when complete.
+```
+
+Your agent will inspect your music files, configure the dependencies, execute the tool, and report the locations of your finished flip-folder charts and master books.
+
+### Option B: Manual Setup (Step-by-Step for Humans)
+
+You do **not** need programming experience to use this tool manually. Follow these simple steps:
+
+#### Step 1: Install Python
 
 Ensure you have **Python 3.9 or newer** installed on your computer:
 
 - **Mac**: Open the **Terminal** app and check with `python3 --version`. If not installed, download from [python.org](https://www.python.org/downloads/) or run `brew install python`.
 - **Windows**: Download the installer from [python.org](https://www.python.org/downloads/). **Important:** During installation, check the box that says **"Add Python to PATH"**.
 
-### Step 2: Clone or Download this Repository
+#### Step 2: Clone or Download this Repository
 
 If you use Git:
 
@@ -62,7 +87,7 @@ cd FlipFolder-Parser
 
 Or click the green **Code** button on GitHub and select **Download ZIP**, then unpack the folder.
 
-### Step 3: Install Required Dependencies
+#### Step 3: Install Required Dependencies
 
 Open your command prompt or terminal in the project folder and run:
 
@@ -72,7 +97,7 @@ pip install -r requirements.txt
 
 This installs PyMuPDF, OpenCV, and NumPy for PDF handling and image processing.
 
-### Step 4: Run the Tool on Your Music Packet
+#### Step 4: Run the Tool on Your Music Packet
 
 Place your scanned instrument PDF (e.g., `Clarinet 1.pdf`) into the folder and run:
 
