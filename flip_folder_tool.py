@@ -617,17 +617,20 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
     t_start = time.time()
     pdf_path = str(Path(pdf_path).resolve())
     pdf_stem = Path(pdf_path).stem
+    pdf_dir = Path(pdf_path).parent
 
     if not instrument_name:
         instrument_name = pdf_stem.replace("_", " ").strip()
     inst_safe = sanitize_filename(instrument_name)
 
     if output_dir is None:
-        output_dir = f"Extracted_5x7_Charts_{inst_safe}"
+        output_dir = str(pdf_dir / f"Extracted_5x7_Charts_{inst_safe}")
+    else:
+        output_dir = str(Path(output_dir).resolve())
     os.makedirs(output_dir, exist_ok=True)
 
     if master_pdf_path is None and generate_master:
-        master_pdf_path = f"{inst_safe}_Complete_5x7_FlipFolder.pdf"
+        master_pdf_path = str(pdf_dir / f"{inst_safe}_Complete_5x7_FlipFolder.pdf")
 
     # Resolve manifest
     if manifest_path is None:
