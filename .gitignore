@@ -21,6 +21,9 @@ Thumbs.db
 
 # Music PDFs and extraction outputs (Prevent committing copyrighted sheet music)
 *.pdf
-Extracted_5x7_Charts/
+*.tmp
+.flipfolder_cache.json
+Extracted_5x7_Charts*/
 extracted_charts/
 output/
+

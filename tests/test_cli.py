@@ -15,6 +15,11 @@ def test_cli_parser_defaults():
     assert args.no_deskew is False
     assert args.no_master is False
     assert args.no_amber is False
+    assert args.jobs is None
+    assert args.force is False
+    assert args.no_cache is False
+    assert args.only is None
+    assert args.pages is None
 
 
 def test_cli_custom_flags():
@@ -28,7 +33,12 @@ def test_cli_custom_flags():
         "--no-amber",
         "--no-deskew",
         "--dpi", "300",
-        "--margin", "18.0"
+        "--margin", "18.0",
+        "-j", "6",
+        "--force",
+        "--no-cache",
+        "--only", "Dancing_Queen",
+        "--pages", "34-39"
     ])
 
     assert args.inputs == ["Trumpet.pdf"]
@@ -40,6 +50,11 @@ def test_cli_custom_flags():
     assert args.no_deskew is True
     assert args.dpi == 300
     assert args.margin == 18.0
+    assert args.jobs == 6
+    assert args.force is True
+    assert args.no_cache is True
+    assert args.only == "Dancing_Queen"
+    assert args.pages == "34-39"
 
 
 def test_cli_empty_inputs():

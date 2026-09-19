@@ -155,6 +155,45 @@ The tool will:
 3. Create `New_Season_Packet_arrangements.csv` and `.json` with placeholder song titles.
 4. You can open the CSV in Excel, type in your actual song titles, and run!
 
+## High-Performance Processing (Caching & Multi-Core)
+
+When managing a full marching band library (hundreds of charts across dozens of instrument packets), running full extractions repeatedly is resource-intensive. FlipFolder-Parser includes a built-in high-performance build engine:
+
+### 1. Incremental Caching (Sub-Second Re-runs)
+Every extracted chart is hashed against its source PDF file timestamp, page slice, and extraction parameters in `.flipfolder_cache.json`. Subsequent runs automatically detect unchanged charts and skip rendering:
+
+```bash
+# First run: extracts and caches all charts
+python flip_folder_tool.py "Clarinet 1.pdf"
+
+# Second run: detects all 64 charts are up to date and finishes in < 0.1s
+python flip_folder_tool.py "Clarinet 1.pdf"
+```
+
+To force a full rebuild bypassing the cache:
+```bash
+python flip_folder_tool.py "Clarinet 1.pdf" --force
+```
+
+### 2. Multi-Core Parallelization (`-j` / `--jobs`)
+Distributes chart rendering and image processing across multiple CPU cores via process pooling:
+
+```bash
+# Run with 4 or 8 parallel workers:
+python flip_folder_tool.py "Clarinet 1.pdf" -j 4
+```
+
+### 3. Selective Filtering (`--only` & `--pages`)
+Work on a single chart or a specific range of pages without processing the whole packet:
+
+```bash
+# Only extract charts matching a title or pattern:
+python flip_folder_tool.py "Clarinet 1.pdf" --only "Dancing_Queen"
+
+# Only extract arrangements spanning pages 34 to 39:
+python flip_folder_tool.py "Clarinet 1.pdf" --pages 34-39
+```
+
 ---
 
 ## Advanced Options & CLI Reference
@@ -166,6 +205,11 @@ The tool will:
 | `--output-dir` | `-o` | `Extracted_5x7_Charts` | Folder where individual 5" × 7" charts are saved. |
 | `--master` | | `<Instrument>_Complete_5x7_FlipFolder.pdf` | File path for the compiled master flip-folder book. |
 | `--instrument` | | Derived from filename | Explicitly override the instrument name. |
+| `-j`, `--jobs` | | Auto (up to 8) | Number of parallel worker processes. |
+| `-f`, `--force` | | `False` | Force re-generation of all charts, bypassing cache. |
+| `--no-cache` | | `False` | Disable reading and writing the `.flipfolder_cache.json` file. |
+| `--only`, `--filter` | | `None` | Filter arrangements by title substring or regex pattern. |
+| `--pages` | | `None` | Filter arrangements by 1-based page numbers (e.g. 34-39 or 1,2,5). |
 | `--generate-manifest` | | `False` | Scan the PDF, detect blank pages, and generate a starter CSV. |
 | `--no-master` | | `False` | Skip generating the combined master flip-folder PDF. |
 | `--no-amber` | | `False` | Disable amber highlighting on boxed performance cuts. |

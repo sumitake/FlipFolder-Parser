@@ -32,10 +32,13 @@ Usage Examples:
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
 import sys
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import cv2
@@ -49,12 +52,94 @@ DEFAULT_DPI = 200
 
 # Color for performance cut box overlay (BGR: #FFD54F amber -> B=79, G=213, R=255)
 AMBER_BGR = (79, 213, 255)
+CACHE_FILENAME = ".flipfolder_cache.json"
 
 
 def sanitize_filename(name: str) -> str:
     """Sanitize string for safe filenames."""
     s = re.sub(r'[^\w\s-]', '', name).strip()
     return re.sub(r'[-\s]+', '_', s)
+
+
+def parse_page_ranges(page_spec: str) -> set[int]:
+    """Parse page spec (e.g. '1,3,5-8') into 1-based page integer set."""
+    pages = set()
+    for part in page_spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start_s, end_s = part.split("-", 1)
+            pages.update(range(int(start_s), int(end_s) + 1))
+        else:
+            pages.add(int(part))
+    return pages
+
+
+def compute_chart_hash(pdf_path: str, item: dict, params: dict) -> str:
+    """
+    Compute a deterministic SHA256 hash representing the source PDF state,
+    chart pages/sections, and extraction hyperparameters.
+    """
+    source_stat = os.stat(pdf_path)
+    payload = {
+        "mtime_ns": source_stat.st_mtime_ns,
+        "size": source_stat.st_size,
+        "title": item["title"],
+        "pages": [[int(p[0]), str(p[1])] for p in item["pages"]],
+        "params": {
+            "target_w_pt": float(params.get("target_w_pt", DEFAULT_TARGET_W_PT)),
+            "target_h_pt": float(params.get("target_h_pt", DEFAULT_TARGET_H_PT)),
+            "margin_pt": float(params.get("margin_pt", DEFAULT_MARGIN_PT)),
+            "dpi": int(params.get("dpi", DEFAULT_DPI)),
+            "do_deskew": bool(params.get("do_deskew", True)),
+            "highlight_amber": bool(params.get("highlight_amber", True)),
+            "amber_opacity": float(params.get("amber_opacity", 0.20)),
+        },
+    }
+    raw = json.dumps(payload, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def get_cache_file_path(output_dir: str) -> Path:
+    """Return path to cache manifest inside output directory."""
+    return Path(output_dir) / CACHE_FILENAME
+
+
+def load_cache(output_dir: str) -> dict:
+    """Load cached extraction metadata from disk if available."""
+    cache_path = get_cache_file_path(output_dir)
+    if cache_path.exists():
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_cache(output_dir: str, cache_data: dict) -> None:
+    """Safely persist cache metadata to disk via atomic write."""
+    cache_path = get_cache_file_path(output_dir)
+    try:
+        tmp_path = cache_path.with_suffix(".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, indent=2)
+        os.replace(tmp_path, cache_path)
+    except Exception:
+        pass
+
+
+def is_chart_cached(output_dir: str, title: str, chart_hash: str, cache: dict) -> bool:
+    """Check if individual chart PDF exists and matches the computed hash."""
+    out_filename = f"{title}_5x7.pdf"
+    out_path = Path(output_dir) / out_filename
+    if not out_path.exists():
+        return False
+    entry = cache.get(title)
+    if not entry or not isinstance(entry, dict):
+        return False
+    return entry.get("hash") == chart_hash
 
 
 def load_manifest(manifest_path: str):
@@ -396,6 +481,125 @@ def process_half_sheet(doc, page_idx: int, section: str, dpi: int = DEFAULT_DPI,
     return cropped_img
 
 
+def _render_and_save_chart_worker(task: dict) -> dict:
+    """
+    Worker function executed in parallel worker processes to extract,
+    process, and save an individual 5x7 chart PDF.
+    """
+    pdf_path = task["pdf_path"]
+    item = task["item"]
+    title = item["title"]
+    pages_to_extract = item["pages"]
+    output_dir = task["output_dir"]
+    dpi = task["dpi"]
+    do_deskew = task["do_deskew"]
+    highlight_amber = task["highlight_amber"]
+    amber_opacity = task["amber_opacity"]
+    target_w_pt = task["target_w_pt"]
+    target_h_pt = task["target_h_pt"]
+    margin_pt = task["margin_pt"]
+    chart_hash = task["chart_hash"]
+
+    out_filename = f"{title}_5x7.pdf"
+    out_path = os.path.join(output_dir, out_filename)
+    tmp_out_path = out_path + ".tmp"
+
+    try:
+        doc = fitz.open(pdf_path)
+        out_pdf = fitz.open()
+
+        for p_idx, section in pages_to_extract:
+            if p_idx >= len(doc):
+                continue
+
+            chart_img = process_half_sheet(
+                doc, p_idx, section, dpi=dpi, do_deskew=do_deskew,
+                highlight_amber=highlight_amber, amber_opacity=amber_opacity
+            )
+
+            # Encode image to PNG stream
+            success, enc_img = cv2.imencode(".png", chart_img)
+            if not success:
+                raise RuntimeError(f"Failed to encode image for {title} (page {p_idx + 1})")
+            img_bytes = enc_img.tobytes()
+
+            # Dimension calculations for 5x7 canvas
+            avail_w = target_w_pt - (2 * margin_pt)
+            avail_h = target_h_pt - (2 * margin_pt)
+            img_h, img_w, _ = chart_img.shape
+            img_aspect = img_w / img_h
+            avail_aspect = avail_w / avail_h
+
+            if img_aspect > avail_aspect:
+                draw_w = avail_w
+                draw_h = avail_w / img_aspect
+            else:
+                draw_h = avail_h
+                draw_w = avail_h * img_aspect
+
+            x_offset = margin_pt + (avail_w - draw_w) / 2.0
+            y_offset = margin_pt + (avail_h - draw_h) / 2.0
+            dest_rect = fitz.Rect(x_offset, y_offset, x_offset + draw_w, y_offset + draw_h)
+
+            page_individual = out_pdf.new_page(width=target_w_pt, height=target_h_pt)
+            page_individual.insert_image(dest_rect, stream=img_bytes)
+
+        out_pdf.save(tmp_out_path, garbage=4, deflate=True)
+        out_pdf.close()
+        doc.close()
+        os.replace(tmp_out_path, out_path)
+
+        return {
+            "title": title,
+            "filename": out_filename,
+            "pages": len(pages_to_extract),
+            "chart_hash": chart_hash,
+            "success": True,
+            "error": None
+        }
+    except Exception as e:
+        if os.path.exists(tmp_out_path):
+            try:
+                os.remove(tmp_out_path)
+            except OSError:
+                pass
+        return {
+            "title": title,
+            "filename": out_filename,
+            "pages": 0,
+            "chart_hash": chart_hash,
+            "success": False,
+            "error": str(e)
+        }
+
+
+def assemble_master_pdf(output_dir: str, catalog: list, master_pdf_path: str) -> tuple[int, float]:
+    """
+    Fast zero-reencode master PDF assembly by splicing individual chart PDFs.
+    Returns (total_pages, file_size_mb).
+    """
+    master_pdf = fitz.open()
+    total_pages = 0
+    for item in catalog:
+        out_filename = f"{item['title']}_5x7.pdf"
+        chart_path = os.path.join(output_dir, out_filename)
+        if os.path.exists(chart_path):
+            chart_doc = fitz.open(chart_path)
+            master_pdf.insert_pdf(chart_doc)
+            total_pages += len(chart_doc)
+            chart_doc.close()
+        else:
+            print(f"  [Warning] Missing chart PDF for master collection: {out_filename}")
+
+    tmp_master_path = master_pdf_path + ".tmp"
+    master_pdf.save(tmp_master_path, garbage=4, deflate=True)
+    master_pdf.close()
+    os.replace(tmp_master_path, master_pdf_path)
+
+    size_mb = os.path.getsize(master_pdf_path) / (1024 * 1024)
+    return total_pages, size_mb
+
+
 def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = None,
                    master_pdf_path: str = None, instrument_name: str = None,
                    target_w_pt: float = DEFAULT_TARGET_W_PT,
@@ -403,30 +607,35 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
                    margin_pt: float = DEFAULT_MARGIN_PT,
                    dpi: int = DEFAULT_DPI, do_deskew: bool = True,
                    highlight_amber: bool = True, amber_opacity: float = 0.20,
-                   generate_master: bool = True):
+                   generate_master: bool = True,
+                   jobs: int = None, force: bool = False, no_cache: bool = False,
+                   only: str = None, pages: str = None):
     """
     Main extraction pipeline for a single instrument PDF packet.
+    Supports incremental caching, parallel processing, and selective filtering.
     """
+    t_start = time.time()
     pdf_path = str(Path(pdf_path).resolve())
     pdf_stem = Path(pdf_path).stem
-    
+
     if not instrument_name:
         instrument_name = pdf_stem.replace("_", " ").strip()
     inst_safe = sanitize_filename(instrument_name)
-    
+
     if output_dir is None:
         output_dir = f"Extracted_5x7_Charts_{inst_safe}"
     os.makedirs(output_dir, exist_ok=True)
-    
+
     if master_pdf_path is None and generate_master:
         master_pdf_path = f"{inst_safe}_Complete_5x7_FlipFolder.pdf"
-        
+
     # Resolve manifest
     if manifest_path is None:
         manifest_path = find_default_manifest(pdf_path)
-        
+
     doc = fitz.open(pdf_path)
-    
+    num_doc_pages = len(doc)
+
     if manifest_path and Path(manifest_path).exists():
         print(f"[{instrument_name}] Loading arrangement manifest: {manifest_path}")
         catalog = load_manifest(manifest_path)
@@ -434,7 +643,7 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
         print(f"[{instrument_name}] No manifest provided or found. Running in auto-detection mode...")
         catalog = []
         chart_num = 1
-        for p_idx in range(len(doc)):
+        for p_idx in range(num_doc_pages):
             for sec in ["top", "bottom"]:
                 if not is_half_sheet_blank(doc, p_idx, sec, dpi=100):
                     catalog.append({
@@ -443,87 +652,150 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
                     })
                     chart_num += 1
         print(f"[{instrument_name}] Auto-detected {len(catalog)} active half-sheets.")
-        
-    master_pdf = fitz.open() if generate_master else None
-    total_files = 0
-    total_pages = 0
-    
+    doc.close()
+
+    raw_catalog_count = len(catalog)
+
+    # Selective filtering
+    if only:
+        try:
+            pattern = re.compile(only, re.IGNORECASE)
+            catalog = [item for item in catalog if pattern.search(item["title"])]
+        except re.error:
+            catalog = [item for item in catalog if only.lower() in item["title"].lower()]
+
+    if pages:
+        try:
+            allowed_pages = parse_page_ranges(pages)
+            catalog = [
+                item for item in catalog
+                if any((p_idx + 1) in allowed_pages for p_idx, _ in item["pages"])
+            ]
+        except ValueError as e:
+            print(f"  [Warning] Invalid --pages format '{pages}': {e}. Processing all catalog pages.")
+
+    if not catalog:
+        print(f"[{instrument_name}] No arrangements matched filtering criteria (out of {raw_catalog_count}).")
+        return
+
+    # Worker count
+    if jobs is None or jobs <= 0:
+        cpu_cnt = os.cpu_count() or 4
+        jobs = min(cpu_cnt, 8)
+
+    cache = {} if no_cache else load_cache(output_dir)
+    params = {
+        "target_w_pt": target_w_pt,
+        "target_h_pt": target_h_pt,
+        "margin_pt": margin_pt,
+        "dpi": dpi,
+        "do_deskew": do_deskew,
+        "highlight_amber": highlight_amber,
+        "amber_opacity": amber_opacity,
+    }
+
+    filter_info = f" (filtered from {raw_catalog_count})" if len(catalog) != raw_catalog_count else ""
+    cache_status = "Disabled" if no_cache else ("Bypassed (--force)" if force else "Enabled")
+
     print("=" * 65)
     print(f"Processing Instrument: {instrument_name}")
-    print(f"Source PDF: {Path(pdf_path).name} ({len(doc)} pages)")
-    print(f"Catalog: {len(catalog)} arrangements")
+    print(f"Source PDF: {Path(pdf_path).name} ({num_doc_pages} pages)")
+    print(f"Catalog: {len(catalog)} arrangements{filter_info}")
+    print(f"Execution: {jobs} worker{'s' if jobs > 1 else ''} | Caching: {cache_status}")
     print(f"Target format: 5\" x 7\" ({target_w_pt:.0f} x {target_h_pt:.0f} pt)")
     print(f"Output directory: {output_dir}")
     print("=" * 65)
-    
+
+    results = {}
+    pending_tasks = []
+
     for idx, item in enumerate(catalog, 1):
         title = item["title"]
-        pages_to_extract = item["pages"]
-        out_pdf = fitz.open()
-        
-        for p_idx, section in pages_to_extract:
-            if p_idx >= len(doc):
-                print(f"  [Warning] Page {p_idx + 1} exceeds document page count ({len(doc)}). Skipping.")
-                continue
-                
-            chart_img = process_half_sheet(
-                doc, p_idx, section, dpi=dpi, do_deskew=do_deskew,
-                highlight_amber=highlight_amber, amber_opacity=amber_opacity
-            )
-            
-            # Encode image to PNG stream
-            success, enc_img = cv2.imencode(".png", chart_img)
-            img_bytes = enc_img.tobytes()
-            
-            # Dimension calculations for 5x7 canvas
-            avail_w = target_w_pt - (2 * margin_pt)
-            avail_h = target_h_pt - (2 * margin_pt)
-            img_h, img_w, _ = chart_img.shape
-            img_aspect = img_w / img_h
-            avail_aspect = avail_w / avail_h
-            
-            if img_aspect > avail_aspect:
-                draw_w = avail_w
-                draw_h = avail_w / img_aspect
-            else:
-                draw_h = avail_h
-                draw_w = avail_h * img_aspect
-                
-            x_offset = margin_pt + (avail_w - draw_w) / 2.0
-            y_offset = margin_pt + (avail_h - draw_h) / 2.0
-            dest_rect = fitz.Rect(x_offset, y_offset, x_offset + draw_w, y_offset + draw_h)
-            
-            # Add to individual title PDF
-            page_individual = out_pdf.new_page(width=target_w_pt, height=target_h_pt)
-            page_individual.insert_image(dest_rect, stream=img_bytes)
-            
-            # Add to master compiled collection
-            if master_pdf is not None:
-                page_master = master_pdf.new_page(width=target_w_pt, height=target_h_pt)
-                page_master.insert_image(dest_rect, stream=img_bytes)
-                
-            total_pages += 1
-            
+        chart_hash = compute_chart_hash(pdf_path, item, params)
         out_filename = f"{title}_5x7.pdf"
-        out_path = os.path.join(output_dir, out_filename)
-        out_pdf.save(out_path, garbage=4, deflate=True)
-        out_pdf.close()
-        total_files += 1
-        
-        page_suffix = f"({len(pages_to_extract)} page{'s' if len(pages_to_extract) > 1 else ''})"
-        print(f"[{idx:02d}/{len(catalog)}] Generated {out_filename:<35} {page_suffix}")
-        
-    doc.close()
-    
-    if master_pdf is not None:
-        master_pdf.save(master_pdf_path, garbage=4, deflate=True)
-        master_pdf.close()
-        master_size_mb = os.path.getsize(master_pdf_path) / (1024 * 1024)
+
+        if not force and not no_cache and is_chart_cached(output_dir, title, chart_hash, cache):
+            p_cnt = len(item["pages"])
+            p_sfx = f"({p_cnt} page{'s' if p_cnt > 1 else ''})"
+            print(f"[{idx:02d}/{len(catalog)}] [Cached]    {out_filename:<35} {p_sfx}")
+            results[idx] = {
+                "title": title,
+                "filename": out_filename,
+                "pages": p_cnt,
+                "chart_hash": chart_hash,
+                "cached": True,
+                "success": True,
+                "error": None,
+            }
+        else:
+            task_payload = {
+                "pdf_path": pdf_path,
+                "item": item,
+                "output_dir": output_dir,
+                "target_w_pt": target_w_pt,
+                "target_h_pt": target_h_pt,
+                "margin_pt": margin_pt,
+                "dpi": dpi,
+                "do_deskew": do_deskew,
+                "highlight_amber": highlight_amber,
+                "amber_opacity": amber_opacity,
+                "chart_hash": chart_hash,
+            }
+            pending_tasks.append((idx, task_payload))
+
+    # Execute pending tasks
+    if pending_tasks:
+        effective_workers = min(jobs, len(pending_tasks))
+        if effective_workers > 1:
+            with ProcessPoolExecutor(max_workers=effective_workers) as executor:
+                future_to_idx = {
+                    executor.submit(_render_and_save_chart_worker, task): idx
+                    for idx, task in pending_tasks
+                }
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    res = future.result()
+                    results[idx] = res
+                    p_sfx = f"({res['pages']} page{'s' if res['pages'] > 1 else ''})"
+                    if res["success"]:
+                        print(f"[{idx:02d}/{len(catalog)}] Generated   {res['filename']:<35} {p_sfx}")
+                    else:
+                        print(f"[{idx:02d}/{len(catalog)}] [Error]     {res['filename']:<35} - {res['error']}")
+        else:
+            for idx, task in pending_tasks:
+                res = _render_and_save_chart_worker(task)
+                results[idx] = res
+                p_sfx = f"({res['pages']} page{'s' if res['pages'] > 1 else ''})"
+                if res["success"]:
+                    print(f"[{idx:02d}/{len(catalog)}] Generated   {res['filename']:<35} {p_sfx}")
+                else:
+                    print(f"[{idx:02d}/{len(catalog)}] [Error]     {res['filename']:<35} - {res['error']}")
+
+    # Save cache
+    if not no_cache:
+        for res in results.values():
+            if res.get("success"):
+                cache[res["title"]] = {
+                    "hash": res["chart_hash"],
+                    "pages": res["pages"],
+                    "filename": res["filename"],
+                    "updated_at": time.time(),
+                }
+        save_cache(output_dir, cache)
+
+    # Assemble master PDF
+    if generate_master and master_pdf_path:
+        t_master_start = time.time()
+        total_master_pages, master_size_mb = assemble_master_pdf(output_dir, catalog, master_pdf_path)
+        t_master_elapsed = time.time() - t_master_start
         print("-" * 65)
-        print(f"Master Collection: {master_pdf_path} ({total_pages} pages, {master_size_mb:.2f} MB)")
-        
+        print(f"Master Collection: {master_pdf_path} ({total_master_pages} pages, {master_size_mb:.2f} MB) [Assembled in {t_master_elapsed:.2f}s]")
+
+    t_elapsed = time.time() - t_start
+    cached_count = sum(1 for r in results.values() if r.get("cached"))
+    rendered_count = sum(1 for r in results.values() if not r.get("cached") and r.get("success"))
     print("-" * 65)
-    print(f"Completed '{instrument_name}': {total_files} individual PDFs in '{output_dir}/'")
+    print(f"Completed '{instrument_name}': {len(results)} charts ({cached_count} cached, {rendered_count} rendered) in {t_elapsed:.2f}s")
     print("=" * 65)
 
 
@@ -534,11 +806,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process a packet using default arrangements catalog:
+  # Fast incremental run (skips unchanged charts automatically):
   python flip_folder_tool.py "Clarinet 1.pdf"
 
-  # Process with specific CSV manifest:
-  python flip_folder_tool.py "Trumpet 1.pdf" --manifest arrangements.csv
+  # Force re-rendering all charts using 4 parallel workers:
+  python flip_folder_tool.py "Clarinet 1.pdf" --force -j 4
+
+  # Extract only a specific song:
+  python flip_folder_tool.py "Clarinet 1.pdf" --only "Dancing_Queen"
+
+  # Process arrangements spanning specific pages:
+  python flip_folder_tool.py "Clarinet 1.pdf" --pages 34-39
 
   # Process multiple instrument parts in batch:
   python flip_folder_tool.py "Clarinet 1.pdf" "Trumpet 1.pdf" "Flute.pdf"
@@ -555,6 +833,11 @@ Examples:
     parser.add_argument("--instrument", help="Override instrument name (otherwise derived from filename).")
     parser.add_argument("--generate-manifest", action="store_true", help="Scan PDF, detect active half-sheets, and output starter manifest templates.")
     parser.add_argument("--no-master", action="store_true", help="Do not generate the compiled master flip-folder PDF.")
+    parser.add_argument("-j", "--jobs", type=int, default=None, help="Number of parallel worker processes (default: up to 8 CPU cores).")
+    parser.add_argument("-f", "--force", action="store_true", help="Force re-generation of all charts, bypassing the incremental cache.")
+    parser.add_argument("--no-cache", action="store_true", help="Disable reading and writing the .flipfolder_cache.json file.")
+    parser.add_argument("--only", "--filter", dest="only", help="Filter arrangements by title substring or regex (e.g. --only Dancing_Queen).")
+    parser.add_argument("--pages", help="Filter arrangements by 1-based page numbers (e.g. --pages 34-39 or --pages 1,2,5).")
     parser.add_argument("--no-amber", action="store_true", help="Disable amber highlight on performance cut boxes.")
     parser.add_argument("--amber-opacity", type=float, default=0.20, help="Opacity for cut box highlight (default: 0.20).")
     parser.add_argument("--no-deskew", action="store_true", help="Disable automatic staff line de-skewing.")
@@ -568,26 +851,26 @@ Examples:
 def main():
     parser = build_arg_parser()
     args = parser.parse_args()
-    
+
     all_inputs = []
     if args.inputs:
         all_inputs.extend(args.inputs)
     if args.opt_inputs:
         all_inputs.extend(args.opt_inputs)
-        
+
     if not all_inputs:
         parser.print_help()
         sys.exit(1)
-        
+
     for pdf_file in all_inputs:
         if not os.path.exists(pdf_file):
             print(f"Error: Input file '{pdf_file}' not found.")
             continue
-            
+
         if args.generate_manifest:
             generate_manifest_template(pdf_file, args.manifest)
             continue
-            
+
         process_packet(
             pdf_path=pdf_file,
             manifest_path=args.manifest,
@@ -601,7 +884,12 @@ def main():
             do_deskew=not args.no_deskew,
             highlight_amber=not args.no_amber,
             amber_opacity=args.amber_opacity,
-            generate_master=not args.no_master
+            generate_master=not args.no_master,
+            jobs=args.jobs,
+            force=args.force,
+            no_cache=args.no_cache,
+            only=args.only,
+            pages=args.pages
         )
 
 if __name__ == "__main__":
