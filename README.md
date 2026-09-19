@@ -28,7 +28,7 @@ Marching band music is traditionally printed as **2-up half-sheets** (two songs 
 ## ✨ Key Features
 
 | Feature | How It Works |
-|---|---|
+| --- | --- |
 | 📐 **Auto-Deskew** | Uses computer-vision Hough line transforms to detect music staff angles and straighten crooked scans automatically. |
 | ✂️ **Margin & Binder Cleaning** | Trims away 3-ring binder punch guides, left scanner borders, and horizontal midline dividers. |
 | 🎼 **Dynamic Mark Protection** | Uses an "ink-valley" detection algorithm to strip tiny publisher copyright fine print while strictly preserving low notation, dynamic markings (`ff`, `fff`, `p`), and hairpins. |
@@ -143,7 +143,7 @@ The tool will:
 ## ⚙️ Advanced Options & CLI Reference
 
 | Flag | Short | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `inputs` | `-i` | *(Required)* | One or more input PDF file paths. |
 | `--manifest` | `-m` | `arrangements.csv` | Path to a custom arrangement CSV or JSON file. |
 | `--output-dir` | `-o` | `Extracted_5x7_Charts` | Folder where individual 5" × 7" charts are saved. |
@@ -163,16 +163,20 @@ The tool will:
 
 ## ❓ Frequently Asked Questions (FAQ)
 
-#### Q: How do I import the master PDF into ForScore or MobileSheets?
+### Q: How do I import the master PDF into ForScore or MobileSheets?
+
 **A:** The compiled master PDF (`<Instrument>_Complete_5x7_FlipFolder.pdf`) is standard PDF format. AirDrop, email, or copy it via Google Drive / Dropbox to your tablet. In ForScore or MobileSheets, import the PDF directly. Because each chart is standard 5" × 7" landscape, it fills your tablet screen cleanly without wasted black bars.
 
-#### Q: Why did the tool skip a page in my PDF?
+### Q: Why did the tool skip a page in my PDF?
+
 **A:** Many scanned band packets end with single charts or blank backsides (e.g. only a top chart on the last page). FlipFolder-Parser uses staff density analysis to detect blank half-sheets and automatically omits them so you don't end up with blank charts in your flip folder.
 
-#### Q: Does this modify my original scanned PDF?
+### Q: Does this modify my original scanned PDF?
+
 **A:** No. Your original PDF files are never changed or overwritten. All extracted and standardized charts are saved into separate files.
 
-#### Q: Can I turn off the amber cut highlighting?
+### Q: Can I turn off the amber cut highlighting?
+
 **A:** Yes. Run with `--no-amber` to output the charts without any color overlays.
 
 ---
