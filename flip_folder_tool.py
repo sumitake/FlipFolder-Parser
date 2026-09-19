@@ -620,17 +620,17 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
     pdf_dir = Path(pdf_path).parent
 
     if not instrument_name:
-        instrument_name = pdf_stem.replace("_", " ").strip()
-    inst_safe = sanitize_filename(instrument_name)
+        instrument_name = pdf_stem.strip()
+    inst_name = instrument_name
 
     if output_dir is None:
-        output_dir = str(pdf_dir / f"Extracted_5x7_Charts_{inst_safe}")
+        output_dir = str(pdf_dir / inst_name)
     else:
         output_dir = str(Path(output_dir).resolve())
     os.makedirs(output_dir, exist_ok=True)
 
     if master_pdf_path is None and generate_master:
-        master_pdf_path = str(pdf_dir / f"{inst_safe}_Complete_5x7_FlipFolder.pdf")
+        master_pdf_path = str(pdf_dir / f"{inst_name} - ALL.pdf")
 
     # Resolve manifest
     if manifest_path is None:
@@ -831,8 +831,8 @@ Examples:
     parser.add_argument("inputs", nargs="*", help="Path(s) to input PDF sheet music packet(s).")
     parser.add_argument("-i", "--input", action="append", dest="opt_inputs", help="Alternative way to specify input PDF(s).")
     parser.add_argument("-m", "--manifest", help="Path to arrangement catalog (JSON or CSV). Defaults to arrangements.json/csv if present.")
-    parser.add_argument("-o", "--output-dir", help="Directory for individual 5x7 PDFs (defaults to Extracted_5x7_Charts_<Instrument>).")
-    parser.add_argument("--master", help="Output path for master compiled PDF (defaults to <Instrument>_Complete_5x7_FlipFolder.pdf).")
+    parser.add_argument("-o", "--output-dir", help="Directory for individual 5x7 PDFs (defaults to '<Instrument>').")
+    parser.add_argument("--master", help="Output path for master compiled PDF (defaults to '<Instrument> - ALL.pdf').")
     parser.add_argument("--instrument", help="Override instrument name (otherwise derived from filename).")
     parser.add_argument("--generate-manifest", action="store_true", help="Scan PDF, detect active half-sheets, and output starter manifest templates.")
     parser.add_argument("--no-master", action="store_true", help="Do not generate the compiled master flip-folder PDF.")

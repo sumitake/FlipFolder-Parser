@@ -82,8 +82,8 @@ python flip_folder_tool.py "Clarinet 1.pdf"
 
 **That's it!** The tool will:
 
-1. Extract every song into the `Extracted_5x7_Charts/` folder.
-2. Build a complete flip-folder book named `Clarinet_1_Complete_5x7_FlipFolder.pdf`.
+1. Extract every song into the `Clarinet 1/` folder.
+2. Build a complete flip-folder book named `Clarinet 1 - ALL.pdf`.
 
 ---
 
@@ -135,8 +135,8 @@ python flip_folder_tool.py "Flute.pdf" "Clarinet 1.pdf" "Alto Sax 1.pdf" "Trumpe
 
 Each run automatically generates:
 
-- Individual 5" × 7" song PDFs in `Extracted_5x7_Charts_<Instrument>/`.
-- A compiled master flip folder: `<Instrument>_Complete_5x7_FlipFolder.pdf`.
+- Individual 5" × 7" song PDFs in `<Instrument>/` (e.g., `Trumpet 1/`).
+- A compiled master flip folder: `<Instrument> - ALL.pdf` (e.g., `Trumpet 1 - ALL.pdf`).
 
 ---
 
@@ -206,8 +206,8 @@ python flip_folder_tool.py "Clarinet 1.pdf" --pages 34-39
 | --- | --- | --- | --- |
 | `inputs` | `-i` | *(Required)* | One or more input PDF file paths. |
 | `--manifest` | `-m` | `arrangements.csv` | Path to a custom arrangement CSV or JSON file. |
-| `--output-dir` | `-o` | `Extracted_5x7_Charts` | Folder where individual 5" × 7" charts are saved. |
-| `--master` | | `<Instrument>_Complete_5x7_FlipFolder.pdf` | File path for the compiled master flip-folder book. |
+| `--output-dir` | `-o` | `<Instrument>/` | Folder where individual 5" × 7" charts are saved. |
+| `--master` | | `<Instrument> - ALL.pdf` | File path for the compiled master flip-folder book. |
 | `--instrument` | | Derived from filename | Explicitly override the instrument name. |
 | `-j`, `--jobs` | | Auto (up to 8) | Number of parallel worker processes. |
 | `-f`, `--force` | | `False` | Force re-generation of all charts, bypassing cache. |
@@ -230,7 +230,7 @@ python flip_folder_tool.py "Clarinet 1.pdf" --pages 34-39
 
 ### Q: How do I import the master PDF into ForScore or MobileSheets?
 
-**A:** The compiled master PDF (`<Instrument>_Complete_5x7_FlipFolder.pdf`) is standard PDF format. AirDrop, email, or copy it via Google Drive / Dropbox to your tablet. In ForScore or MobileSheets, import the PDF directly. Because each chart is standard 5" × 7" landscape, it fills your tablet screen cleanly without wasted black bars.
+**A:** The compiled master PDF (`<Instrument> - ALL.pdf`) is standard PDF format. AirDrop, email, or copy it via Google Drive / Dropbox to your tablet. In ForScore or MobileSheets, import the PDF directly. Because each chart is standard 5" × 7" landscape, it fills your tablet screen cleanly without wasted black bars.
 
 ### Q: Why did the tool skip a page in my PDF?
 
