@@ -1,4 +1,4 @@
-# FlipFolder-Parser 🎺🥁🎷
+# FlipFolder-Parser
 
 **Automated marching band sheet music parser and flip-folder standardizer.**
 
@@ -9,7 +9,7 @@
 
 ---
 
-## 🎯 What is FlipFolder-Parser?
+## What is FlipFolder-Parser?
 
 Marching band music is traditionally printed as **2-up half-sheets** (two songs per standard 8.5" × 11" page). When scanned or distributed digitally, these packets often suffer from:
 
@@ -27,20 +27,20 @@ Marching band music is traditionally printed as **2-up half-sheets** (two songs 
 
 ---
 
-## ✨ Key Features
+## Key Features
 
 | Feature | How It Works |
 | --- | --- |
-| 📐 **Auto-Deskew** | Uses computer-vision Hough line transforms to detect music staff angles and straighten crooked scans automatically. |
-| ✂️ **Margin & Binder Cleaning** | Trims away 3-ring binder punch guides, left scanner borders, and horizontal midline dividers. |
-| 🎼 **Dynamic Mark Protection** | Uses an "ink-valley" detection algorithm to strip tiny publisher copyright fine print while strictly preserving low notation, dynamic markings (`ff`, `fff`, `p`), and hairpins. |
-| 🖍️ **Performance Cut Highlighting** | Automatically identifies rectangular boxed performance cuts and highlights them in translucent amber (`#FFD54F` at 20% opacity) so band members immediately see cuts. |
-| 📊 **Spreadsheet-Driven (No Coding)** | Control song order, titles, and page assignments using a simple `.csv` spreadsheet in Microsoft Excel, Apple Numbers, or Google Sheets. |
-| 📁 **Batch Processing** | Process all instrument parts (Flute, Clarinet, Alto Sax, Trumpet, Trombone, Tuba, etc.) across the entire band in a single run. |
+| **Auto-Deskew** | Uses computer-vision Hough line transforms to detect music staff angles and straighten crooked scans automatically. |
+| **Margin & Binder Cleaning** | Trims away 3-ring binder punch guides, left scanner borders, and horizontal midline dividers. |
+| **Dynamic Mark Protection** | Uses an "ink-valley" detection algorithm to strip tiny publisher copyright fine print while strictly preserving low notation, dynamic markings (`ff`, `fff`, `p`), and hairpins. |
+| **Performance Cut Highlighting** | Automatically identifies rectangular boxed performance cuts and highlights them in translucent amber (`#FFD54F` at 20% opacity) so band members immediately see cuts. |
+| **Spreadsheet-Driven (No Coding)** | Control song order, titles, and page assignments using a simple `.csv` spreadsheet in Microsoft Excel, Apple Numbers, or Google Sheets. |
+| **Batch Processing** | Process all instrument parts (Flute, Clarinet, Alto Sax, Trumpet, Trombone, Tuba, etc.) across the entire band in a single run. |
 
 ---
 
-## 🚀 Quick Start (Step-by-Step for Beginners)
+## Quick Start (Step-by-Step for Beginners)
 
 You do **not** need programming experience to use this tool. Follow these simple steps:
 
@@ -87,7 +87,7 @@ python flip_folder_tool.py "Clarinet 1.pdf"
 
 ---
 
-## 📊 Managing the Repertoire (`arrangements.csv`)
+## Managing the Repertoire (`arrangements.csv`)
 
 You don't have to touch any Python code to change song names or page orders. Everything is managed in **`arrangements.csv`**, which you can open and edit directly in **Microsoft Excel**, **Apple Numbers**, or **Google Sheets**.
 
@@ -110,13 +110,13 @@ Camino_Real,12,top
 Proud_Mary,11,bottom
 ```
 
-### 📑 Multi-Page Songs
+### Multi-Page Songs
 
 If an arrangement takes up multiple half-sheets (such as *Camino Real* above, which spans page 11 top and page 12 top), simply **list the title with the same name on consecutive rows**. The tool will automatically detect this and assemble them into a single 2-page PDF chart!
 
 ---
 
-## 🎺 Processing Other Instrument Parts
+## Processing Other Instrument Parts
 
 Marching band packets generally share the exact same song order across the entire band. Once your `arrangements.csv` is set up, you can process any instrument section's packet:
 
@@ -140,7 +140,7 @@ Each run automatically generates:
 
 ---
 
-## 🆕 Starting from Scratch with a New Packet (`--generate-manifest`)
+## Starting from Scratch with a New Packet (`--generate-manifest`)
 
 If you have a brand-new packet of music and want to generate a starter spreadsheet template:
 
@@ -157,7 +157,7 @@ The tool will:
 
 ---
 
-## ⚙️ Advanced Options & CLI Reference
+## Advanced Options & CLI Reference
 
 | Flag | Short | Default | Description |
 | --- | --- | --- | --- |
@@ -178,7 +178,7 @@ The tool will:
 
 ---
 
-## ❓ Frequently Asked Questions (FAQ)
+## Frequently Asked Questions (FAQ)
 
 ### Q: How do I import the master PDF into ForScore or MobileSheets?
 
@@ -198,7 +198,7 @@ The tool will:
 
 ---
 
-## 🤝 Contributing & License
+## Contributing & License
 
 Pull requests and issues are welcome! If you have suggestions for new features, edge-case musical notation formats, or scanner artifacts, feel free to open an issue.
 
