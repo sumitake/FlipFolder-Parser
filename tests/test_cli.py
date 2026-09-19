@@ -61,3 +61,22 @@ def test_cli_empty_inputs():
     parser = build_arg_parser()
     args = parser.parse_args([])
     assert args.inputs == []
+    assert args.batch is None
+    assert args.compress is False
+    assert args.quality == 92
+    assert args.auto_catalog is False
+
+
+def test_cli_batch_and_compress_flags():
+    parser = build_arg_parser()
+    args = parser.parse_args([
+        "--batch", "/path/to/music",
+        "--compress",
+        "--quality", "85",
+        "--auto-catalog"
+    ])
+    assert args.batch == "/path/to/music"
+    assert args.compress is True
+    assert args.quality == 85
+    assert args.auto_catalog is True
+

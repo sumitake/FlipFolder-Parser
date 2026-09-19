@@ -39,8 +39,14 @@ def test_assemble_master_pdf_toc(temp_dir):
     assert len(master_doc) == 3
 
     toc = master_doc.get_toc()
-    # Expected: [[1, 'Song One (Opener)', 1], [1, 'Song Two', 2]]
-    assert len(toc) == 2
+    # Expected:
+    # Level 1: Song One (Opener) on page 1
+    # Level 1: Song Two on page 2
+    # Level 2: Page 1 on page 2
+    # Level 2: Page 2 on page 3
+    assert len(toc) == 4
     assert toc[0] == [1, "Song One (Opener)", 1]
     assert toc[1] == [1, "Song Two", 2]
+    assert toc[2] == [2, "Page 1", 2]
+    assert toc[3] == [2, "Page 2", 3]
     master_doc.close()

@@ -108,6 +108,8 @@ def compute_chart_hash(pdf_path: str, item: dict, params: dict) -> str:
             "do_deskew": bool(params.get("do_deskew", True)),
             "highlight_amber": bool(params.get("highlight_amber", True)),
             "amber_opacity": float(params.get("amber_opacity", 0.20)),
+            "compress": bool(params.get("compress", False)),
+            "quality": int(params.get("quality", 92)),
         },
     }
     raw = json.dumps(payload, sort_keys=True)
@@ -405,6 +407,23 @@ def process_half_sheet(doc, page_idx: int, section: str, dpi: int = DEFAULT_DPI,
     else:
         left_strip_bound = int(208 * scale)
         right_strip_bound = int(1680 * scale)
+
+        # Smart stave-aware margin detection:
+        # Check if musical staves extend into the 0-208px binder margin region.
+        # Long horizontal lines indicate staves/clefs (binder hole punches do not form long horizontal lines).
+        kernel_staff_detect = cv2.getStructuringElement(cv2.MORPH_RECT, (int(40 * scale), 1))
+        early_staves = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_staff_detect)
+        stave_ink_by_col = np.sum(early_staves > 0, axis=0)
+        early_stave_cols = np.where(stave_ink_by_col[:int(208 * scale)] > int(10 * scale))[0]
+        if len(early_stave_cols) > 0 and early_stave_cols[0] < int(180 * scale):
+            # Music staves start near the left margin (clean/digital sheet); preserve clefs
+            left_strip_bound = max(int(w * 0.015), early_stave_cols[0] - int(12 * scale))
+
+        # Check if staves extend past the default right boundary
+        late_stave_cols = np.where(stave_ink_by_col[int(1650 * scale):] > int(10 * scale))[0]
+        if len(late_stave_cols) > 0:
+            right_strip_bound = min(int(w * 0.985), int(1650 * scale) + late_stave_cols[-1] + int(15 * scale))
+
         thresh[:, :left_strip_bound] = 0   # Strip binder punch guides and left margin cut lines
         thresh[:, right_strip_bound:] = 0  # Strip far right outer page edge
 
@@ -529,7 +548,9 @@ def _render_and_save_chart_worker(task: dict) -> dict:
     target_w_pt = task["target_w_pt"]
     target_h_pt = task["target_h_pt"]
     margin_pt = task["margin_pt"]
-    chart_hash = task["chart_hash"]
+    chart_hash = task.get("chart_hash")
+    compress = task.get("compress", False)
+    quality = task.get("quality", 92)
 
     out_filename = f"{title}_5x7.pdf"
     out_path = os.path.join(output_dir, out_filename)
@@ -538,8 +559,9 @@ def _render_and_save_chart_worker(task: dict) -> dict:
     try:
         opened_docs = {}
         out_pdf = pymupdf.open()
+        total_chart_pages = len(pages_to_extract)
 
-        for p_entry in pages_to_extract:
+        for p_idx_in_chart, p_entry in enumerate(pages_to_extract):
             p_idx = p_entry[0]
             section = p_entry[1]
             p_file = p_entry[2] if (len(p_entry) > 2 and p_entry[2]) else item.get("file", pdf_path)
@@ -556,8 +578,12 @@ def _render_and_save_chart_worker(task: dict) -> dict:
                 highlight_amber=highlight_amber, amber_opacity=amber_opacity
             )
 
-            # Encode image to PNG stream
-            success, enc_img = cv2.imencode(".png", chart_img)
+            # Encode image to JPEG stream (compressed) or PNG stream (lossless)
+            if compress:
+                success, enc_img = cv2.imencode(".jpg", chart_img, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            else:
+                success, enc_img = cv2.imencode(".png", chart_img)
+
             if not success:
                 raise RuntimeError(f"Failed to encode image for {title} (page {p_idx + 1})")
             img_bytes = enc_img.tobytes()
@@ -582,6 +608,16 @@ def _render_and_save_chart_worker(task: dict) -> dict:
 
             page_individual = out_pdf.new_page(width=target_w_pt, height=target_h_pt)
             page_individual.insert_image(dest_rect, stream=img_bytes)
+
+            # Subtle margin badge for multi-page arrangements
+            if total_chart_pages > 1:
+                badge_text = f"[{p_idx_in_chart + 1}/{total_chart_pages}]"
+                page_individual.insert_text(
+                    (target_w_pt - 36, target_h_pt - 6),
+                    badge_text,
+                    fontsize=7,
+                    color=(0.45, 0.45, 0.45),
+                )
 
         out_pdf.save(tmp_out_path, garbage=4, deflate=True)
         out_pdf.close()
@@ -634,7 +670,13 @@ def assemble_master_pdf(output_dir: str, catalog: list, master_pdf_path: str) ->
             chart_doc = pymupdf.open(chart_path)
             chart_len = len(chart_doc)
             toc_title = item.get("raw_title") or item["title"].replace("_", " ")
-            toc.append([1, toc_title, total_pages + 1])
+            start_p = total_pages + 1
+            toc.append([1, toc_title, start_p])
+            if chart_len > 1:
+                is_part = "part" in toc_title.lower()
+                for sub_idx in range(chart_len):
+                    label = f"Part {sub_idx + 1}" if is_part else f"Page {sub_idx + 1}"
+                    toc.append([2, label, start_p + sub_idx])
             master_pdf.insert_pdf(chart_doc)
             total_pages += chart_len
             chart_doc.close()
@@ -662,6 +704,7 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
                    highlight_amber: bool = True, amber_opacity: float = 0.20,
                    generate_master: bool = True,
                    jobs: int = None, force: bool = False, no_cache: bool = False,
+                   compress: bool = False, quality: int = 92,
                    only: str = None, pages: str = None):
     """
     Main extraction pipeline for a single instrument PDF packet.
@@ -748,16 +791,19 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
         "do_deskew": do_deskew,
         "highlight_amber": highlight_amber,
         "amber_opacity": amber_opacity,
+        "compress": compress,
+        "quality": quality,
     }
 
     filter_info = f" (filtered from {raw_catalog_count})" if len(catalog) != raw_catalog_count else ""
     cache_status = "Disabled" if no_cache else ("Bypassed (--force)" if force else "Enabled")
+    comp_info = f" | JPEG Q{quality}" if compress else " | Lossless PNG"
 
     print("=" * 65)
     print(f"Processing Instrument: {instrument_name}")
     print(f"Source PDF: {Path(pdf_path).name} ({num_doc_pages} pages)")
     print(f"Catalog: {len(catalog)} arrangements{filter_info}")
-    print(f"Execution: {jobs} worker{'s' if jobs > 1 else ''} | Caching: {cache_status}")
+    print(f"Execution: {jobs} worker{'s' if jobs > 1 else ''} | Caching: {cache_status}{comp_info}")
     print(f"Target format: 5\" x 7\" ({target_w_pt:.0f} x {target_h_pt:.0f} pt)")
     print(f"Output directory: {output_dir}")
     print("=" * 65)
@@ -795,6 +841,8 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
                 "do_deskew": do_deskew,
                 "highlight_amber": highlight_amber,
                 "amber_opacity": amber_opacity,
+                "compress": compress,
+                "quality": quality,
                 "chart_hash": chart_hash,
             }
             pending_tasks.append((idx, task_payload))
@@ -840,6 +888,8 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
         save_cache(output_dir, cache)
 
     # Assemble master PDF
+    total_master_pages = 0
+    master_size_mb = 0.0
     if generate_master and master_pdf_path:
         t_master_start = time.time()
         total_master_pages, master_size_mb = assemble_master_pdf(output_dir, catalog, master_pdf_path)
@@ -854,6 +904,226 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
     print(f"Completed '{instrument_name}': {len(results)} charts ({cached_count} cached, {rendered_count} rendered) in {t_elapsed:.2f}s")
     print("=" * 65)
 
+    return {
+        "instrument": instrument_name,
+        "output_dir": output_dir,
+        "master_pdf_path": master_pdf_path if generate_master else None,
+        "charts_count": len(results),
+        "cached_count": cached_count,
+        "rendered_count": rendered_count,
+        "master_pages": total_master_pages,
+        "master_size_mb": master_size_mb,
+        "elapsed_s": t_elapsed,
+    }
+
+
+def auto_catalog_pdf(pdf_path: str, output_manifest_path: str = None) -> list[dict]:
+    """
+    Inspect a PDF using OCR (Apple Vision on macOS if available, or text extraction)
+    to discover song titles and generate an arrangement manifest.
+    """
+    doc = pymupdf.open(pdf_path)
+    total_pages = len(doc)
+    catalog = []
+    chart_num = 1
+
+    has_vision = False
+    try:
+        import Vision
+        from Cocoa import NSData
+        has_vision = True
+    except ImportError:
+        pass
+
+    print(f"Auto-cataloging '{Path(pdf_path).name}' ({total_pages} pages, OCR: {'Apple Vision' if has_vision else 'Embedded text'})...")
+
+    for p_idx in range(total_pages):
+        page = doc[p_idx]
+        for sec in ["top", "bottom"]:
+            if is_half_sheet_blank(doc, p_idx, sec):
+                continue
+
+            p_rect = page.rect
+            if sec == "top":
+                clip_rect = pymupdf.Rect(p_rect.x0, p_rect.y0, p_rect.x1, p_rect.y0 + p_rect.height * 0.50)
+            else:
+                clip_rect = pymupdf.Rect(p_rect.x0, p_rect.y0 + p_rect.height * 0.50, p_rect.x1, p_rect.y1)
+
+            title = None
+            if has_vision:
+                pix = page.get_pixmap(clip=clip_rect, dpi=150)
+                png_data = pix.tobytes("png")
+                nsdata = NSData.dataWithBytes_length_(png_data, len(png_data))
+                req = Vision.VNRecognizeTextRequest.alloc().init()
+                req.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+                req.setUsesLanguageCorrection_(False)
+                handler = Vision.VNImageRequestHandler.alloc().initWithData_options_(nsdata, {})
+                success, _ = handler.performRequests_error_([req], None)
+                if success and req.results():
+                    lines = [obs.topCandidates_(1)[0].string() for obs in req.results()]
+                    filtered = [
+                        line_text.strip() for line_text in lines
+                        if len(line_text.strip()) > 3
+                        and not any(k in line_text.upper() for k in ["ARRANGER", "WORDS BY", "MUSIC BY", "COPYRIGHT", "ALL RIGHTS", "TIME:", "TEMPO:"])
+                    ]
+                    if filtered:
+                        raw_t = filtered[0]
+                        clean_t = sanitize_filename(raw_t)
+                        if clean_t:
+                            title = clean_t
+
+            if not title:
+                text = page.get_text("text", clip=clip_rect)
+                lines = [line_text.strip() for line_text in text.splitlines() if len(line_text.strip()) > 3]
+                filtered = [
+                    line_text for line_text in lines
+                    if not any(k in line_text.upper() for k in ["ARRANGER", "WORDS BY", "MUSIC BY", "COPYRIGHT", "ALL RIGHTS"])
+                ]
+                if filtered:
+                    clean_t = sanitize_filename(filtered[0])
+                    if clean_t:
+                        title = clean_t
+
+            if not title:
+                title = f"Chart_{chart_num:02d}"
+
+            catalog.append({
+                "title": title,
+                "pages": [{"page": p_idx + 1, "section": sec}],
+            })
+            chart_num += 1
+
+    doc.close()
+
+    if output_manifest_path is None:
+        p = Path(pdf_path)
+        output_manifest_path = str(p.parent / f"{p.stem}_arrangements.json")
+
+    with open(output_manifest_path, "w", encoding="utf-8") as f:
+        json.dump(catalog, f, indent=2)
+
+    print(f"Successfully generated auto-catalog manifest ({len(catalog)} charts): {output_manifest_path}")
+    return catalog
+
+
+def batch_process_directory(
+    batch_dir: str,
+    manifest_dir: str = None,
+    output_base_dir: str = None,
+    jobs: int = None,
+    force: bool = False,
+    no_cache: bool = False,
+    compress: bool = False,
+    quality: int = 92,
+    generate_master: bool = True,
+    target_w_pt: float = DEFAULT_TARGET_W_PT,
+    target_h_pt: float = DEFAULT_TARGET_H_PT,
+    margin_pt: float = DEFAULT_MARGIN_PT,
+    dpi: int = DEFAULT_DPI,
+    do_deskew: bool = True,
+    highlight_amber: bool = True,
+    amber_opacity: float = 0.20,
+    only: str = None,
+    pages: str = None,
+) -> list[dict]:
+    """
+    Batch process an entire directory of instrument PDF booklets.
+    Automatically matches each packet to its manifest if available.
+    """
+    batch_path = Path(batch_dir).resolve()
+    if not batch_path.exists() or not batch_path.is_dir():
+        print(f"Error: Batch directory '{batch_dir}' does not exist or is not a directory.")
+        return []
+
+    candidate_pdfs = [
+        f for f in sorted(batch_path.glob("*.pdf"))
+        if not f.name.endswith("- ALL.pdf")
+        and not f.name.endswith(".bak.pdf")
+        and not f.name.endswith(".tmp")
+        and not f.name.startswith(".")
+    ]
+
+    if not candidate_pdfs:
+        print(f"No candidate instrument PDFs found in '{batch_dir}'.")
+        return []
+
+    print("=" * 75)
+    print(f"Batch Processing {len(candidate_pdfs)} instrument packets in: {batch_path}")
+    print("=" * 75)
+
+    results = []
+    t_batch_start = time.time()
+
+    for idx, pdf_file in enumerate(candidate_pdfs, 1):
+        inst_name = pdf_file.stem
+        manifest_path = None
+        search_manifest_dirs = []
+        if manifest_dir:
+            search_manifest_dirs.append(Path(manifest_dir))
+        search_manifest_dirs.extend([
+            batch_path / "manifests",
+            Path("manifests"),
+            batch_path,
+            Path("."),
+        ])
+
+        for md in search_manifest_dirs:
+            if not md.exists():
+                continue
+            for suffix in ["_arrangements.json", ".json", "_arrangements.csv", ".csv"]:
+                cand = md / f"{inst_name}{suffix}"
+                if cand.exists():
+                    manifest_path = str(cand)
+                    break
+            if manifest_path:
+                break
+
+        if not manifest_path:
+            manifest_path = find_default_manifest(str(pdf_file))
+
+        out_dir = os.path.join(output_base_dir or batch_path, inst_name)
+        master_out = os.path.join(output_base_dir or batch_path, f"{inst_name} - ALL.pdf") if generate_master else None
+
+        print(f"\n>>> [{idx:02d}/{len(candidate_pdfs)}] Processing {inst_name}...")
+        res = process_packet(
+            pdf_path=str(pdf_file),
+            manifest_path=manifest_path,
+            output_dir=out_dir,
+            master_pdf_path=master_out,
+            instrument_name=inst_name,
+            target_w_pt=target_w_pt,
+            target_h_pt=target_h_pt,
+            margin_pt=margin_pt,
+            dpi=dpi,
+            do_deskew=do_deskew,
+            highlight_amber=highlight_amber,
+            amber_opacity=amber_opacity,
+            generate_master=generate_master,
+            jobs=jobs,
+            force=force,
+            no_cache=no_cache,
+            compress=compress,
+            quality=quality,
+            only=only,
+            pages=pages,
+        )
+        if res:
+            results.append(res)
+
+    total_batch_time = time.time() - t_batch_start
+
+    print("\n" + "=" * 75)
+    print(f"BATCH EXTRACTION COMPLETE ({len(results)} INSTRUMENTS IN {total_batch_time:.1f}s)")
+    print("=" * 75)
+    print(f"{'Instrument':<18} {'Charts':<8} {'Master Pages':<14} {'Master Size':<12} {'Time':<8}")
+    print("-" * 75)
+    for r in results:
+        size_str = f"{r['master_size_mb']:.1f} MB" if r.get("master_size_mb") else "N/A"
+        pages_str = f"{r['master_pages']} pages" if r.get("master_pages") else "N/A"
+        print(f"{r['instrument']:<18} {r['charts_count']:<8} {pages_str:<14} {size_str:<12} {r['elapsed_s']:.1f}s")
+    print("=" * 75)
+    return results
+
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build and configure the command-line argument parser."""
@@ -865,6 +1135,9 @@ Examples:
   # Fast incremental run (skips unchanged charts automatically):
   python flip_folder_tool.py "Clarinet 1.pdf"
 
+  # Batch process an entire band music directory with compressed PDFs:
+  python flip_folder_tool.py --batch "/path/to/Alumni Band Music" --compress
+
   # Force re-rendering all charts using 4 parallel workers:
   python flip_folder_tool.py "Clarinet 1.pdf" --force -j 4
 
@@ -874,19 +1147,20 @@ Examples:
   # Process arrangements spanning specific pages:
   python flip_folder_tool.py "Clarinet 1.pdf" --pages 34-39
 
-  # Process multiple instrument parts in batch:
-  python flip_folder_tool.py "Clarinet 1.pdf" "Trumpet 1.pdf" "Flute.pdf"
-
-  # Scan a new packet and generate editable manifest templates:
-  python flip_folder_tool.py "Mellophone.pdf" --generate-manifest
+  # Scan a new packet and generate OCR-assisted manifest:
+  python flip_folder_tool.py "Mellophone.pdf" --auto-catalog
         """
     )
     parser.add_argument("inputs", nargs="*", help="Path(s) to input PDF sheet music packet(s).")
     parser.add_argument("-i", "--input", action="append", dest="opt_inputs", help="Alternative way to specify input PDF(s).")
+    parser.add_argument("--batch", help="Path to directory containing multiple instrument PDF packets to batch process.")
     parser.add_argument("-m", "--manifest", help="Path to arrangement catalog (JSON or CSV). Defaults to arrangements.json/csv if present.")
     parser.add_argument("-o", "--output-dir", help="Directory for individual 5x7 PDFs (defaults to '<Instrument>').")
     parser.add_argument("--master", help="Output path for master compiled PDF (defaults to '<Instrument> - ALL.pdf').")
     parser.add_argument("--instrument", help="Override instrument name (otherwise derived from filename).")
+    parser.add_argument("--compress", action="store_true", help="Compress chart images using high-quality JPEG (reducing master PDF size by ~65%%).")
+    parser.add_argument("--quality", type=int, default=92, help="JPEG compression quality between 1 and 100 when --compress is enabled (default: 92).")
+    parser.add_argument("--auto-catalog", action="store_true", help="Use OCR to automatically discover arrangement titles and generate a tailored manifest.")
     parser.add_argument("--generate-manifest", action="store_true", help="Scan PDF, detect active half-sheets, and output starter manifest templates.")
     parser.add_argument("--no-master", action="store_true", help="Do not generate the compiled master flip-folder PDF.")
     parser.add_argument("-j", "--jobs", type=int, default=None, help="Number of parallel worker processes (default: up to 8 CPU cores).")
@@ -908,6 +1182,29 @@ def main():
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    if args.batch:
+        batch_process_directory(
+            batch_dir=args.batch,
+            manifest_dir=args.manifest,
+            output_base_dir=args.output_dir,
+            jobs=args.jobs,
+            force=args.force,
+            no_cache=args.no_cache,
+            compress=args.compress,
+            quality=args.quality,
+            generate_master=not args.no_master,
+            target_w_pt=args.target_width,
+            target_h_pt=args.target_height,
+            margin_pt=args.margin,
+            dpi=args.dpi,
+            do_deskew=not args.no_deskew,
+            highlight_amber=not args.no_amber,
+            amber_opacity=args.amber_opacity,
+            only=args.only,
+            pages=args.pages,
+        )
+        return
+
     all_inputs = []
     if args.inputs:
         all_inputs.extend(args.inputs)
@@ -921,6 +1218,10 @@ def main():
     for pdf_file in all_inputs:
         if not os.path.exists(pdf_file):
             print(f"Error: Input file '{pdf_file}' not found.")
+            continue
+
+        if args.auto_catalog:
+            auto_catalog_pdf(pdf_file, args.manifest)
             continue
 
         if args.generate_manifest:
@@ -944,8 +1245,10 @@ def main():
             jobs=args.jobs,
             force=args.force,
             no_cache=args.no_cache,
+            compress=args.compress,
+            quality=args.quality,
             only=args.only,
-            pages=args.pages
+            pages=args.pages,
         )
 
 if __name__ == "__main__":

@@ -129,22 +129,29 @@ python flip_folder_tool.py "Mellophone.pdf"
 python flip_folder_tool.py "Trombone 1.pdf"
 python flip_folder_tool.py "Sousaphone.pdf"
 
-# Or batch-process the entire band at once:
-python flip_folder_tool.py "Flute.pdf" "Clarinet 1.pdf" "Alto Sax 1.pdf" "Trumpet 1.pdf" "Trombone 1.pdf"
+# Or batch-process an entire band music directory with automatic manifest matching:
+python flip_folder_tool.py --batch "/path/to/Alumni Band Music"
+
+# You can also pass multiple files directly:
+python flip_folder_tool.py "Flute.pdf" "Clarinet 1.pdf" "Alto Sax 1.pdf" "Trumpet 1.pdf"
 ```
 
 Each run automatically generates:
 
 - Individual 5" × 7" song PDFs in `<Instrument>/` (e.g., `Trumpet 1/`).
-- A compiled master flip folder: `<Instrument> - ALL.pdf` (e.g., `Trumpet 1 - ALL.pdf`).
+- A compiled master flip folder: `<Instrument> - ALL.pdf` (e.g., `Trumpet 1 - ALL.pdf`) with an interactive Table of Contents outline for instant tablet navigation.
 
 ---
 
-## Starting from Scratch with a New Packet (`--generate-manifest`)
+## Starting from Scratch with a New Packet (`--auto-catalog` & `--generate-manifest`)
 
 If you have a brand-new packet of music and want to generate a starter spreadsheet template:
 
 ```bash
+# Option A: Use OCR to automatically recognize and name song titles from sheet headings:
+python flip_folder_tool.py "New_Season_Packet.pdf" --auto-catalog
+
+# Option B: Detect active half-sheets and generate blank starter templates:
 python flip_folder_tool.py "New_Season_Packet.pdf" --generate-manifest
 ```
 
@@ -152,10 +159,12 @@ The tool will:
 
 1. Inspect every page of the PDF.
 2. Automatically detect and filter out blank half-sheets (such as blank packet backsides).
-3. Create `New_Season_Packet_arrangements.csv` and `.json` with placeholder song titles.
-4. You can open the CSV in Excel, type in your actual song titles, and run!
+3. Recognize song title headers using direct OCR (Apple Vision on macOS or embedded text).
+4. Output `New_Season_Packet_arrangements.json` and `.csv` ready for editing.
 
-## High-Performance Processing (Caching & Multi-Core)
+---
+
+## High-Performance Processing & PDF Optimization
 
 When managing a full marching band library (hundreds of charts across dozens of instrument packets), running full extractions repeatedly is resource-intensive. FlipFolder-Parser includes a built-in high-performance build engine:
 
@@ -186,7 +195,23 @@ Distributes chart rendering and image processing across multiple CPU cores via p
 python flip_folder_tool.py "Clarinet 1.pdf" -j 4
 ```
 
-### 3. Selective Filtering (`--only` & `--pages`)
+### 3. File Size Optimization & Compression (`--compress` & `--quality`)
+
+By default, charts are embedded as lossless PNGs (averaging ~50 MB per 68-page master book). Using `--compress` encodes charts using high-quality JPEG (default quality 92), reducing master flip-folder sizes by **~65%** (down to ~15–18 MB) with zero perceptible loss of notation sharpness on Retina tablet screens:
+
+```bash
+# Compile lightweight mobile-ready flip folders:
+python flip_folder_tool.py "Clarinet 1.pdf" --compress
+
+# Custom JPEG quality level (e.g. 85 for maximum size reduction):
+python flip_folder_tool.py --batch "/path/to/Alumni Band Music" --compress --quality 85
+```
+
+### 4. Interactive Table of Contents & Multi-Page Navigation
+
+All compiled master books (`<Instrument> - ALL.pdf`) include an interactive Document Outline (PDF Bookmarks) allowing musicians to jump to any tune with a single tap in forScore, MobileSheets, GoodNotes, Apple Books, or Adobe Acrobat. Multi-page charts (e.g. *Radar Love*, *Camino Real*) feature nested child bookmarks (`Page 1`, `Page 2`) and subtle corner page badges (`[1/2]`, `[2/2]`) in the margin.
+
+### 5. Selective Filtering (`--only` & `--pages`)
 
 Work on a single chart or a specific range of pages without processing the whole packet:
 
@@ -205,6 +230,10 @@ python flip_folder_tool.py "Clarinet 1.pdf" --pages 34-39
 | Flag | Short | Default | Description |
 | --- | --- | --- | --- |
 | `inputs` | `-i` | *(Required)* | One or more input PDF file paths. |
+| `--batch` | | `None` | Path to directory containing multiple instrument PDF packets to batch process. |
+| `--compress` | | `False` | Compress chart images using JPEG (reducing master PDF size by ~65%). |
+| `--quality` | | `92` | JPEG quality (1-100) when `--compress` is enabled. |
+| `--auto-catalog` | | `False` | Use OCR to automatically discover arrangement titles and generate a manifest. |
 | `--manifest` | `-m` | `arrangements.csv` | Path to a custom arrangement CSV or JSON file. |
 | `--output-dir` | `-o` | `<Instrument>/` | Folder where individual 5" × 7" charts are saved. |
 | `--master` | | `<Instrument> - ALL.pdf` | File path for the compiled master flip-folder book. |
