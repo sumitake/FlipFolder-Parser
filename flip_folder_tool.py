@@ -30,13 +30,14 @@ Usage Examples:
   python flip_folder_tool.py "Trombone 1.pdf" --generate-manifest
 """
 
-import os
-import sys
 import argparse
-import json
 import csv
+import json
+import os
 import re
+import sys
 from pathlib import Path
+
 import cv2
 import numpy as np
 import pymupdf as fitz
@@ -69,7 +70,7 @@ def load_manifest(manifest_path: str):
     catalog = []
     if path.suffix.lower() == ".csv":
         by_title = {}
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 title = sanitize_filename(row.get("title", "").strip())
@@ -87,7 +88,7 @@ def load_manifest(manifest_path: str):
                     catalog.append(item)
                 by_title[title]["pages"].append((page_num, sec))
     elif path.suffix.lower() == ".json":
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         for item in data:
             title = sanitize_filename(item.get("title", "Untitled"))
@@ -150,6 +151,17 @@ def calculate_deskew_angle(gray: np.ndarray) -> float:
             if abs(angle) < 6.0:
                 angles.append(angle)
     return float(np.median(angles)) if angles else 0.0
+
+
+def deskew_image(img: np.ndarray, angle: float) -> np.ndarray:
+    """Rotate image to correct skew angle using Lanczos interpolation."""
+    if abs(angle) <= 0.05:
+        return img
+    h, w = img.shape[:2]
+    center = (w // 2, h // 2)
+    rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
+    return cv2.warpAffine(img, rot_mat, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REPLICATE)
+
 
 
 def is_half_sheet_blank(doc, page_idx: int, section: str, dpi: int = 100) -> bool:
@@ -217,7 +229,7 @@ def generate_manifest_template(pdf_path: str, output_path: str = None):
         writer.writeheader()
         writer.writerows(csv_rows)
         
-    print(f"Generated manifest templates:")
+    print("Generated manifest templates:")
     print(f"  JSON: {json_out}")
     print(f"  CSV:  {csv_out}")
     print(f"Found {len(catalog)} active half-sheets across {total_pages} document pages.")
@@ -253,9 +265,7 @@ def process_half_sheet(doc, page_idx: int, section: str, dpi: int = DEFAULT_DPI,
     if do_deskew:
         angle = calculate_deskew_angle(gray)
         if abs(angle) > 0.05:
-            center = (w // 2, h // 2)
-            rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
-            img = cv2.warpAffine(img, rot_mat, (w, h), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REPLICATE)
+            img = deskew_image(img, angle)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
     # Scale coordinates based on DPI
@@ -498,7 +508,8 @@ def process_packet(pdf_path: str, manifest_path: str = None, output_dir: str = N
     print("=" * 65)
 
 
-def main():
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Build and configure the command-line argument parser."""
     parser = argparse.ArgumentParser(
         description="Extract and standardize marching band sheet music packets into 5x7 flip-folder charts.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -532,7 +543,11 @@ Examples:
     parser.add_argument("--target-width", type=float, default=DEFAULT_TARGET_W_PT, help="Width in points (default: 504.0 pt = 7.0 in).")
     parser.add_argument("--target-height", type=float, default=DEFAULT_TARGET_H_PT, help="Height in points (default: 360.0 pt = 5.0 in).")
     parser.add_argument("--margin", type=float, default=DEFAULT_MARGIN_PT, help="Safe border margin in points (default: 14.0 pt).")
+    return parser
 
+
+def main():
+    parser = build_arg_parser()
     args = parser.parse_args()
     
     all_inputs = []

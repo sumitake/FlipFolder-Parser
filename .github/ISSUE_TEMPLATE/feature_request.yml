@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose an improvement or new feature for FlipFolder-Parser.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem or limitation does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the expected interface, CLI option, or extraction behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Marching Band / Sheet Music Context
+      description: Describe the sheet music layout, publisher format, or band workflow.
+    validations:
+      required: false

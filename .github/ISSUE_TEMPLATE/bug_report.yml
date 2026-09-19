@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible problem with FlipFolder-Parser.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not attach copyrighted sheet music files to public issues. Use synthetic or redacted sample pages if providing visual reproductions.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Python version, and package versions.
+      placeholder: macOS 15, Python 3.12, PyMuPDF 1.25.x, OpenCV 4.10.x
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant CLI arguments or arrangements manifest
+      description: Provide the command run or relevant snippet of arrangements.csv/json.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Error Output
+      description: Include terminal traceback or output.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
