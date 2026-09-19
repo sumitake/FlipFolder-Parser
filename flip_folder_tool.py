@@ -80,7 +80,7 @@ def load_manifest(manifest_path: str):
                 except ValueError:
                     page_num = 0
                 sec = row.get("section", "top").strip().lower()
-                if sec not in ("top", "bottom"):
+                if sec not in ("top", "bottom", "full", "single", "all"):
                     sec = "top"
                 if title not in by_title:
                     item = {"title": title, "pages": []}
@@ -103,7 +103,7 @@ def load_manifest(manifest_path: str):
                 else:
                     page_num = 0
                     sec = "top"
-                if sec not in ("top", "bottom"):
+                if sec not in ("top", "bottom", "full", "single", "all"):
                     sec = "top"
                 pages.append((page_num, sec))
             if pages:
@@ -168,7 +168,9 @@ def is_half_sheet_blank(doc, page_idx: int, section: str, dpi: int = 100) -> boo
     """Check if half-sheet is blank by detecting presence of staves."""
     src_page = doc[page_idx]
     p_rect = src_page.rect
-    if section == "top":
+    if section in ("full", "single", "all"):
+        crop_box = p_rect
+    elif section == "top":
         crop_box = fitz.Rect(p_rect.x0, p_rect.y0, p_rect.x1, p_rect.y0 + p_rect.height * 0.50)
     else:
         crop_box = fitz.Rect(p_rect.x0, p_rect.y0 + p_rect.height * 0.50, p_rect.x1, p_rect.y1)
@@ -243,13 +245,16 @@ def process_half_sheet(doc, page_idx: int, section: str, dpi: int = DEFAULT_DPI,
     """
     src_page = doc[page_idx]
     p_rect = src_page.rect
+    is_full_page = section in ("full", "single", "all")
     
-    if section == "top":
+    if is_full_page:
+        crop_box = p_rect
+    elif section == "top":
         crop_box = fitz.Rect(p_rect.x0, p_rect.y0, p_rect.x1, p_rect.y0 + p_rect.height * 0.50)
     else:
         crop_box = fitz.Rect(p_rect.x0, p_rect.y0 + p_rect.height * 0.50, p_rect.x1, p_rect.y1)
         
-    pix = src_page.get_pixmap(clip=crop_box, dpi=dpi)
+    pix = src_page.get_pixmap(clip=crop_box, dpi=72 if is_full_page else dpi)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.h, pix.w, pix.n))
     if pix.n == 4:
         img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
@@ -269,64 +274,78 @@ def process_half_sheet(doc, page_idx: int, section: str, dpi: int = DEFAULT_DPI,
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
     # Scale coordinates based on DPI
-    scale = dpi / 200.0
-    left_strip_bound = int(208 * scale)
-    right_strip_bound = int(1680 * scale)
+    scale = (h / 900.0) if is_full_page else (dpi / 200.0)
     
     # 2. Binary mask and trim outer cut/binder guides
     _, thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
-    thresh[:, :left_strip_bound] = 0   # Strip binder punch guides and left margin cut lines
-    thresh[:, right_strip_bound:] = 0  # Strip far right outer page edge
     
-    kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (int(100 * scale), 1))
-    
-    # Remove top horizontal divider cutline if present
-    top_limit = int(50 * scale)
-    lines_top = cv2.morphologyEx(thresh[:top_limit, :], cv2.MORPH_OPEN, kernel_h)
-    hit_top = np.where(np.sum(lines_top > 0, axis=1) > int(200 * scale))[0]
-    if len(hit_top) > 0:
-        thresh[:hit_top[-1] + int(3 * scale), :] = 0
+    if is_full_page:
+        left_strip_bound = int(w * 0.015)
+        right_strip_bound = int(w * 0.985)
+        thresh[:int(h * 0.015), :] = 0
+        thresh[int(h * 0.985):, :] = 0
+        thresh[:, :left_strip_bound] = 0
+        thresh[:, right_strip_bound:] = 0
+    else:
+        left_strip_bound = int(208 * scale)
+        right_strip_bound = int(1680 * scale)
+        thresh[:, :left_strip_bound] = 0   # Strip binder punch guides and left margin cut lines
+        thresh[:, right_strip_bound:] = 0  # Strip far right outer page edge
         
-    # Remove bottom horizontal divider cutline if present
-    bot_limit = int(60 * scale)
-    lines_bot = cv2.morphologyEx(thresh[h - bot_limit:, :], cv2.MORPH_OPEN, kernel_h)
-    hit_bot = np.where(np.sum(lines_bot > 0, axis=1) > int(200 * scale))[0]
-    if len(hit_bot) > 0:
-        thresh[h - bot_limit + hit_bot[0] - int(2 * scale):, :] = 0
+        kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (int(100 * scale), 1))
+        
+        # Remove top horizontal divider cutline if present
+        top_limit = int(50 * scale)
+        lines_top = cv2.morphologyEx(thresh[:top_limit, :], cv2.MORPH_OPEN, kernel_h)
+        hit_top = np.where(np.sum(lines_top > 0, axis=1) > int(200 * scale))[0]
+        if len(hit_top) > 0:
+            thresh[:hit_top[-1] + int(3 * scale), :] = 0
+            
+        # Remove bottom horizontal divider cutline if present
+        bot_limit = int(60 * scale)
+        lines_bot = cv2.morphologyEx(thresh[h - bot_limit:, :], cv2.MORPH_OPEN, kernel_h)
+        hit_bot = np.where(np.sum(lines_bot > 0, axis=1) > int(200 * scale))[0]
+        if len(hit_bot) > 0:
+            thresh[h - bot_limit + hit_bot[0] - int(2 * scale):, :] = 0
         
     # Active content horizontal boundaries
     col_ink = np.sum(thresh > 0, axis=0)
-    active_cols = np.where(col_ink > int(25 * scale))[0]
-    x_min = max(left_strip_bound, active_cols[0] - int(12 * scale)) if len(active_cols) > 0 else left_strip_bound
-    x_max = min(right_strip_bound, active_cols[-1] + int(12 * scale)) if len(active_cols) > 0 else right_strip_bound
+    active_cols = np.where(col_ink > (int(5 * scale) if is_full_page else int(25 * scale)))[0]
+    x_min = max(left_strip_bound, active_cols[0] - int(10 * scale)) if len(active_cols) > 0 else left_strip_bound
+    x_max = min(right_strip_bound, active_cols[-1] + int(10 * scale)) if len(active_cols) > 0 else right_strip_bound
     
     # Active content vertical boundaries
     row_ink = np.sum(thresh[:, x_min:x_max] > 0, axis=1)
-    active_rows = np.where(row_ink > int(30 * scale))[0]
+    active_rows = np.where(row_ink > (int(10 * scale) if is_full_page else int(30 * scale)))[0]
     y_min = max(int(5 * scale), active_rows[0] - int(10 * scale)) if len(active_rows) > 0 else int(5 * scale)
     
     # 3. Detect staves and cleanly crop above copyright text
-    kernel_staff = cv2.getStructuringElement(cv2.MORPH_RECT, (int(40 * scale), 1))
+    kernel_staff = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w * 0.025 if is_full_page else 40 * scale), 1))
     staves = cv2.morphologyEx(thresh[:, x_min:x_max], cv2.MORPH_OPEN, kernel_staff)
-    staff_rows = np.where(np.sum(staves > 0, axis=1) > int(200 * scale))[0]
+    staff_rows = np.where(np.sum(staves > 0, axis=1) > int(w * 0.08 if is_full_page else 200 * scale))[0]
     
-    min_staff_span = int(20 * scale)
+    min_staff_span = int(15 * scale)
     if len(staff_rows) > 0:
         diffs = np.diff(staff_rows)
-        split_pts = np.where(diffs > int(15 * scale))[0] + 1
+        split_pts = np.where(diffs > int(10 * scale))[0] + 1
         clusters = np.split(staff_rows, split_pts)
         staff_clusters = [c for c in clusters if (c[-1] - c[0] >= min_staff_span)]
         if len(staff_clusters) > 0:
             y_staff_low = staff_clusters[-1][-1]
-            sub = thresh[y_staff_low:min(h, y_staff_low + int(70 * scale)), x_min:x_max]
-            sub_ink = np.sum(sub > 0, axis=1)
-            search_range = sub_ink[int(8 * scale):min(len(sub_ink), int(25 * scale))]
-            valley_offset = int(8 * scale) + int(np.argmin(search_range)) if len(search_range) > 0 else int(12 * scale)
-            y_max = min(h - int(5 * scale), y_staff_low + valley_offset + int(3 * scale))
+            sub = thresh[y_staff_low:h, x_min:x_max]
+            ink_profile = np.sum(sub > 0, axis=1)
+            nz = np.where(ink_profile > int(10 * scale))[0]
+            gaps = np.where(np.diff(nz) > int(5 * scale))[0]
+            if len(gaps) > 0:
+                y_max = min(h - int(5 * scale), y_staff_low + (nz[gaps[0]] + nz[gaps[0] + 1]) // 2)
+            else:
+                search_range = ink_profile[int(8 * scale):min(len(ink_profile), int(25 * scale))]
+                valley_offset = int(8 * scale) + int(np.argmin(search_range)) if len(search_range) > 0 else int(12 * scale)
+                y_max = min(h - int(5 * scale), y_staff_low + valley_offset + int(3 * scale))
         else:
-            y_max = min(h - int(5 * scale), active_rows[-1] + int(12 * scale)) if len(active_rows) > 0 else (h - int(5 * scale))
+            y_max = min(h - int(5 * scale), active_rows[-1] + int(10 * scale)) if len(active_rows) > 0 else (h - int(5 * scale))
     else:
-        y_max = min(h - int(5 * scale), active_rows[-1] + int(12 * scale)) if len(active_rows) > 0 else (h - int(5 * scale))
+        y_max = min(h - int(5 * scale), active_rows[-1] + int(10 * scale)) if len(active_rows) > 0 else (h - int(5 * scale))
         
     cropped_img = img[y_min:y_max, x_min:x_max].copy()
     

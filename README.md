@@ -95,7 +95,7 @@ You don't have to touch any Python code to change song names or page orders. Eve
 
 - `title`: The name of the song (e.g., `Johnny_B_Goode`, `Proud_Mary`).
 - `page`: The 1-based page number in the scanned PDF document.
-- `section`: Either `top` (the upper half-sheet) or `bottom` (the lower half-sheet).
+- `section`: `top` (upper half-sheet), `bottom` (lower half-sheet), or `full` / `single` (for single 1-up charts or addenda).
 
 ### Example arrangements.csv
 

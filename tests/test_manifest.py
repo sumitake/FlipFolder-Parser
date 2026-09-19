@@ -42,6 +42,28 @@ def test_load_manifest_json(temp_dir, sample_json_content):
     assert catalog[1]["pages"] == [(1, "top"), (2, "top")]
 
 
+def test_load_manifest_full_page_section(temp_dir):
+    csv_file = temp_dir / "arrangements.csv"
+    csv_file.write_text(
+        "title,page,section\nFull_Chart,1,full\nSingle_Chart,2,single\nAll_Chart,3,all\n",
+        encoding="utf-8",
+    )
+    catalog = load_manifest(str(csv_file))
+    assert len(catalog) == 3
+    assert catalog[0]["pages"] == [(0, "full")]
+    assert catalog[1]["pages"] == [(1, "single")]
+    assert catalog[2]["pages"] == [(2, "all")]
+
+    json_file = temp_dir / "arrangements.json"
+    json_file.write_text(
+        '[{"title": "Full_Song", "pages": [{"page": 4, "section": "full"}]}]',
+        encoding="utf-8",
+    )
+    catalog_json = load_manifest(str(json_file))
+    assert len(catalog_json) == 1
+    assert catalog_json[0]["pages"] == [(3, "full")]
+
+
 def test_load_manifest_file_not_found(temp_dir):
     missing_path = temp_dir / "nonexistent.csv"
     with pytest.raises(FileNotFoundError):

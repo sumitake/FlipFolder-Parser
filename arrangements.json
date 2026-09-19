@@ -545,5 +545,54 @@
         "section": "top"
       }
     ]
+  },
+  {
+    "title": "Dancing_Queen",
+    "pages": [
+      {
+        "page": 34,
+        "section": "full"
+      }
+    ]
+  },
+  {
+    "title": "Karn_Evil_9",
+    "pages": [
+      {
+        "page": 35,
+        "section": "full"
+      },
+      {
+        "page": 36,
+        "section": "full"
+      }
+    ]
+  },
+  {
+    "title": "Magic_Carpet_Ride",
+    "pages": [
+      {
+        "page": 37,
+        "section": "full"
+      }
+    ]
+  },
+  {
+    "title": "The_Lion_Sleeps_Tonight",
+    "pages": [
+      {
+        "page": 38,
+        "section": "full"
+      }
+    ]
+  },
+  {
+    "title": "Radar_Love",
+    "pages": [
+      {
+        "page": 39,
+        "section": "full"
+      }
+    ]
   }
 ]
